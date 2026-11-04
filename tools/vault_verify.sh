@@ -37,8 +37,6 @@ mkdir -p "$OVERLAY/stdlib" "$OVERLAY/headers"
 for file in "$LANG_ROOT"/stdlib/*; do ln -s "$file" "$OVERLAY/stdlib/$(basename "$file")"; done
 for file in "$LANG_ROOT"/headers/*; do ln -s "$file" "$OVERLAY/headers/$(basename "$file")"; done
 ln -sf "$ROOT/stdlib/vault_crypto_macos.k" "$OVERLAY/stdlib/vault_crypto_macos.k"
-ln -sf "$ROOT/headers/commoncrypto.krh" "$OVERLAY/headers/commoncrypto.krh"
-ln -sf "$ROOT/headers/security.krh" "$OVERLAY/headers/security.krh"
 
 env KRYPTON_ROOT="$OVERLAY" "$FE" "$ROOT/tests/vault_format_smoke.ks" > /tmp/krypton-vault-format-smoke.kir
 "$HOST_BIN" --ir /tmp/krypton-vault-format-smoke.kir /tmp/krypton-vault-format-smoke

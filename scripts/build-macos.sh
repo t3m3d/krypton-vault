@@ -29,8 +29,6 @@ for file in "$LANG_ROOT"/headers/*; do
   ln -s "$file" "$OVERLAY/headers/$(basename "$file")"
 done
 ln -sf "$VAULT_ROOT/stdlib/vault_crypto_macos.k" "$OVERLAY/stdlib/vault_crypto_macos.k"
-ln -sf "$VAULT_ROOT/headers/commoncrypto.krh" "$OVERLAY/headers/commoncrypto.krh"
-ln -sf "$VAULT_ROOT/headers/security.krh" "$OVERLAY/headers/security.krh"
 
 env KRYPTON_ROOT="$OVERLAY" "$FE" "$VAULT_ROOT/app/krypton_vault.ks" > "$IR_FILE"
 "$HOST" --ir "$IR_FILE" "$BIN_FILE" >/dev/null

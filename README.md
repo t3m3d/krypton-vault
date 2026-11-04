@@ -8,15 +8,14 @@ locally; the VPS sync service stores only opaque encrypted blobs.
 ```text
 app/krypton_vault.ks                 macOS app
 stdlib/vault_crypto_macos.k          Vault crypto module
-headers/{commoncrypto,security}.krh  Native macOS bindings
 tests/                               Vault and crypto smoke tests
 tools/                               Sync server, smoke test, verifier
 deploy/                              systemd, env, and Caddy configuration
 docs/krypton-vault.md                Product and deployment notes
 ```
 
-The Krypton compiler/runtime remains in the sibling repository:
-`../krypton`. Set `KRYPTON_LANG_ROOT` if it is elsewhere.
+The Krypton compiler/runtime and reusable macOS native bindings remain in the
+sibling repository: `../krypton`. Set `KRYPTON_LANG_ROOT` if it is elsewhere.
 
 ## Build the macOS app
 

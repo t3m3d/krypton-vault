@@ -1,8 +1,8 @@
 #!/usr/bin/env kr
 // vault_native_crypto_probe.ks -- native macOS crypto call probe.
 
-import "head:security"
-import "head:commoncrypto"
+import "head:security_macos"
+import "head:commoncrypto_macos"
 
 func hexByte(b) {
     let chars = "0123456789abcdef"

@@ -8,8 +8,8 @@
 
 module vault_crypto_macos
 
-import "head:commoncrypto"
-import "head:security"
+import "head:commoncrypto_macos"
+import "head:security_macos"
 import "k:bitwise"
 
 func _hexNib(c) {
