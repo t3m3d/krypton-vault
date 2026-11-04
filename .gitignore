@@ -1,0 +1,6 @@
+*handoff*
+.build/
+.swiftpm/
+.dd/
+DerivedData/
+.DS_Store
