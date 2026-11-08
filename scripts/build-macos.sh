@@ -28,7 +28,16 @@ done
 for file in "$LANG_ROOT"/headers/*; do
   ln -s "$file" "$OVERLAY/headers/$(basename "$file")"
 done
-ln -sf "$VAULT_ROOT/stdlib/vault_crypto_macos.k" "$OVERLAY/stdlib/vault_crypto_macos.k"
+# Vault-local stdlib and headers override the language copy. Move these into
+# the Krypton repo when they are ready to ship with the language.
+for file in "$VAULT_ROOT"/stdlib/*.k; do
+  [ -e "$file" ] || continue
+  ln -sf "$file" "$OVERLAY/stdlib/$(basename "$file")"
+done
+for file in "$VAULT_ROOT"/headers/*.krh; do
+  [ -e "$file" ] || continue
+  ln -sf "$file" "$OVERLAY/headers/$(basename "$file")"
+done
 
 env KRYPTON_ROOT="$OVERLAY" "$FE" "$VAULT_ROOT/app/krypton_vault.ks" > "$IR_FILE"
 "$HOST" --ir "$IR_FILE" "$BIN_FILE" >/dev/null

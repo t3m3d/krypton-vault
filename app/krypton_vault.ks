@@ -6,6 +6,7 @@
 
 import "k:okui"
 import "k:vault_crypto_macos"
+import "k:vault_model"
 import "k:json_emit"
 import "k:json_parse"
 
@@ -86,37 +87,23 @@ func nthField(line, want) {
 }
 
 func emptyVaultJson() {
-    emit jeObj2("version", jeNum(1), "items", jeArr0())
+    emit vmEmptyJson()
 }
 
 func emptyVaultPlain() {
-    emit "KVJSON1\n" + emptyVaultJson()
+    emit vmEmptyPlain()
 }
 
 func itemJson(title, user, url, pass) {
-    emit jeObj4("title", jeStr(title), "username", jeStr(user), "url", jeStr(url), "password", jeStr(pass))
+    emit vmLoginItem(title, user, url, pass)
 }
 
 func plainJson(plain) {
-    if startsWith(plain, "KVJSON1\n") { emit substring(plain, 8, len(plain)) }
-    emit ""
+    emit vmPlainJson(plain)
 }
 
 func vaultJsonAppend(plain, item) {
-    if !startsWith(plain, "KVJSON1\n") {
-        emit emptyVaultPlain()
-    }
-    let js = plainJson(plain)
-    if contains(js, "\"items\":[]") {
-        emit "KVJSON1\n" + replace(js, "\"items\":[]", "\"items\":[" + item + "]")
-    } else {
-        let arrStart = indexOf(js, "\"items\":[")
-        if arrStart < 0 { emit emptyVaultPlain() }
-        let close = len(js) - 2
-        let prefix = substring(js, 0, close)
-        let suffix = substring(js, close, len(js))
-        emit "KVJSON1\n" + prefix + "," + item + suffix
-    }
+    emit vmAppend(plain, item)
 }
 
 func normalizeBaseUrl(url) {
@@ -150,37 +137,31 @@ func renderVaultWithFilter(plain, query) {
     let q = trim(query)
     doTextBox(vault, "")
     doSet(appH(), "itemCount", "0")
-    if startsWith(plain, "KVJSON1\n") {
-        let parsed = jpParse(plainJson(plain))
+    if vmIsJson(plain) == "1" {
+        let parsed = jpParse(vmPlainJson(plain))
         let count = jpArrLen(parsed, "items")
         let j = 0
         while j < count {
             let base = "items." + j
-            let titleValue = jpGet(parsed, base + ".title")
-            let userValue = jpGet(parsed, base + ".username")
-            let urlValue = jpGet(parsed, base + ".url")
-            let hay = titleValue + " " + userValue + " " + urlValue
-            if q == "" || contains(hay, q) {
-                appendVaultLine(entryLine(titleValue, userValue, urlValue))
+            if q == "" || contains(vmSearchHayAt(parsed, base), q) {
+                appendVaultLine(vmEntryLineAt(parsed, base))
             }
             j += 1
         }
     } else {
-    let n = lineCount(plain)
-    let i = 0
-    while i < n {
-        let line = getLine(plain, i)
-        if len(line) > 0 && line != "KVPLAIN1" {
-            let titleValue = nthField(line, 0)
-            let userValue = nthField(line, 1)
-            let urlValue = nthField(line, 2)
-            let hay = titleValue + " " + userValue + " " + urlValue
-            if q == "" || contains(hay, q) {
-                appendVaultLine(entryLine(titleValue, userValue, urlValue))
+        // Legacy KVPLAIN1 is migrated on unlock; this only covers a raw view.
+        let n = lineCount(plain)
+        let i = 0
+        while i < n {
+            let line = getLine(plain, i)
+            if len(line) > 0 && line != "KVPLAIN1" {
+                let hay = nthField(line, 0) + " " + nthField(line, 1) + " " + nthField(line, 2)
+                if q == "" || contains(hay, q) {
+                    appendVaultLine(entryLine(nthField(line, 0), nthField(line, 1), nthField(line, 2)))
+                }
             }
+            i += 1
         }
-        i += 1
-    }
     }
     if get(appH(), "itemCount") == "0" {
         doTextBox(vault, "No vault items in this local session.\n")
@@ -194,62 +175,11 @@ func renderVaultPlain(plain) {
 }
 
 func vaultFindPassword(plain, query) {
-    let q = trim(query)
-    if q == "" { emit "" }
-    if startsWith(plain, "KVJSON1\n") {
-        let parsed = jpParse(plainJson(plain))
-        let count = jpArrLen(parsed, "items")
-        let j = 0
-        while j < count {
-            let base = "items." + j
-            let titleValue = jpGet(parsed, base + ".title")
-            let userValue = jpGet(parsed, base + ".username")
-            let urlValue = jpGet(parsed, base + ".url")
-            let hay = titleValue + " " + userValue + " " + urlValue
-            if contains(hay, q) { emit jpGet(parsed, base + ".password") }
-            j += 1
-        }
-    } else {
-        let n = lineCount(plain)
-        let i = 0
-        while i < n {
-            let line = getLine(plain, i)
-            if len(line) > 0 && line != "KVPLAIN1" {
-                let hay = nthField(line, 0) + " " + nthField(line, 1) + " " + nthField(line, 2)
-                if contains(hay, q) { emit nthField(line, 3) }
-            }
-            i += 1
-        }
-    }
-    emit ""
+    emit vmPasswordForQuery(plain, query)
 }
 
 func vaultRemoveMatch(plain, query) {
-    let q = trim(query)
-    if q == "" { emit plain }
-    if !startsWith(plain, "KVJSON1\n") { emit plain }
-    let parsed = jpParse(plainJson(plain))
-    let count = jpArrLen(parsed, "items")
-    let items = ""
-    let removed = 0
-    let j = 0
-    while j < count {
-        let base = "items." + j
-        let titleValue = jpGet(parsed, base + ".title")
-        let userValue = jpGet(parsed, base + ".username")
-        let urlValue = jpGet(parsed, base + ".url")
-        let passValue = jpGet(parsed, base + ".password")
-        let hay = titleValue + " " + userValue + " " + urlValue
-        if removed == 0 && contains(hay, q) {
-            removed = 1
-        } else {
-            let item = itemJson(titleValue, userValue, urlValue, passValue)
-            if items == "" { items = item } else { items = items + "\t" + item }
-        }
-        j += 1
-    }
-    if removed == 0 { emit plain }
-    emit "KVJSON1\n" + jeObj2("version", jeNum(1), "items", jeArrFrom(items))
+    emit vmRemoveMatch(plain, query)
 }
 
 func clearEntryFields() {
@@ -257,6 +187,7 @@ func clearEntryFields() {
     doText(get(appH(), "itemUser"), "")
     doText(get(appH(), "itemUrl"), "")
     doText(get(appH(), "itemPassword"), "")
+    doTextBox(get(appH(), "itemNotes"), "")
     emit "1"
 }
 
@@ -269,9 +200,15 @@ func onUnlock(self, cmd, sender) {
     }
     let opened = openLocalVault(master)
     if opened != "" {
-        doSet(appH(), "vaultPlain", opened)
-        renderVaultPlain(opened)
-        setStatus("Unlocked saved vault")
+        // Upgrade a legacy tab-delimited payload before it can be saved.
+        let migrated = vmMigrate(opened)
+        doSet(appH(), "vaultPlain", migrated)
+        renderVaultPlain(migrated)
+        if migrated != opened {
+            setStatus("Unlocked vault (payload upgraded)")
+        } else {
+            setStatus("Unlocked saved vault")
+        }
     } else {
         if get(appH(), "vaultPlain") == "" {
             doSet(appH(), "vaultPlain", emptyVaultPlain())
@@ -306,26 +243,40 @@ func onLock(self, cmd, sender) {
 }
 
 func onAdd(self, cmd, sender) {
+    let kind = choice(get(appH(), "kind"))
     let titleValue = trim(fieldText("itemTitle"))
-    let userValue = trim(fieldText("itemUser"))
-    let urlValue = trim(fieldText("itemUrl"))
-    let passValue = fieldText("itemPassword")
     if titleValue == "" {
         alert("Krypton Vault", "Add a title for this item.")
         emit "1"
     }
-    if passValue == "" {
-        alert("Krypton Vault", "Add a password before saving this item.")
-        emit "1"
-    }
     let plain = get(appH(), "vaultPlain")
     if plain == "" { plain = emptyVaultPlain() }
-    if startsWith(plain, "KVPLAIN1\n") {
-        plain = emptyVaultPlain()
+    if startsWith(plain, "KVPLAIN1\n") { plain = vmMigrate(plain) }
+
+    if kind == "Note" {
+        let notes = textBoxValue(get(appH(), "itemNotes"))
+        if trim(notes) == "" {
+            alert("Krypton Vault", "Add note text before saving this item.")
+            emit "1"
+        }
+        plain = vmAppend(plain, vmNoteItem(titleValue, notes))
+        doSet(appH(), "vaultPlain", plain)
+        renderVaultPlain(plain)
+        clearEntryFields()
+        setStatus("Added note in memory")
+        emit "1"
     }
-    plain = vaultJsonAppend(plain, itemJson(titleValue, userValue, urlValue, passValue))
+
+    let userValue = trim(fieldText("itemUser"))
+    let urlValue = trim(fieldText("itemUrl"))
+    let passValue = fieldText("itemPassword")
+    if passValue == "" {
+        alert("Krypton Vault", "Add a password before saving this login, or switch the type to Note.")
+        emit "1"
+    }
+    plain = vmAppend(plain, vmLoginItem(titleValue, userValue, urlValue, passValue))
     doSet(appH(), "vaultPlain", plain)
-    appendVaultLine(entryLine(titleValue, userValue, urlValue))
+    renderVaultPlain(plain)
     clearEntryFields()
     setStatus("Added in memory")
     emit "1"
@@ -410,19 +361,26 @@ func onSync(self, cmd, sender) {
                 " -o " + shellQuote(tmp) + " 2>&1"
             let fetched = cleanLine(exec(getCmd))
             let restored = readFile(tmp)
-            if startsWith(restored, "KV2\n") {
-                exec("mkdir -p " + shellQuote(environ("HOME") + "/.config/krypton-vault"))
-                writeFile(sealedPath, restored)
+            if vaultIsSealed(restored) == "1" {
                 let master = fieldText("master")
-                let opened = openLocalVault(master)
+                // Authenticate before touching the local vault: a bad or
+                // tampered remote blob must never replace a good local one.
+                let opened = vaultOpen(master, restored)
                 if opened != "" {
+                    let vaultDir = environ("HOME") + "/.config/krypton-vault"
+                    let restoreTmp = sealedPath + ".restore"
+                    exec("mkdir -p " + shellQuote(vaultDir) + " && chmod 700 " + shellQuote(vaultDir))
+                    writeFile(restoreTmp, restored)
+                    exec("chmod 600 " + shellQuote(restoreTmp))
+                    exec("mv -f " + shellQuote(restoreTmp) + " " + shellQuote(sealedPath))
+                    exec("chmod 600 " + shellQuote(sealedPath))
                     doSet(appH(), "vaultPlain", opened)
                     renderVaultPlain(opened)
                     setStatus("Encrypted vault restored")
-                    emit "1"
+                } else {
+                    setStatus("Remote vault did not authenticate")
+                    alert("Krypton Vault", "The remote vault did not open with this master password. Your local vault was left unchanged.")
                 }
-                setStatus("Restored; unlock failed")
-                alert("Krypton Vault", "The encrypted vault was restored, but this master password did not open it.")
                 emit "1"
             }
             if fetched != "" { alert("Krypton Vault", fetched) }
@@ -461,7 +419,7 @@ func onPersist(self, cmd, sender) {
         emit "1"
     }
     let plain = get(appH(), "vaultPlain")
-    if plain == "" || plain == emptyVaultPlain() || plain == "KVPLAIN1\n" {
+    if plain == "" || vmHasItems(plain) != "1" {
         alert("Krypton Vault", "There are no vault items to save.")
         emit "1"
     }

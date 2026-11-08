@@ -41,8 +41,11 @@ stdlib/vault_crypto_macos.k
 ```
 
 That module is a native macOS bridge over Security.framework and CommonCrypto.
-It uses OS random bytes, AES-256-CBC with PKCS7 padding, and HMAC-SHA256, then
-writes:
+KV3 derives keys with PBKDF2-HMAC-SHA256 (600,000 iterations by default), uses
+a fresh OS-random IV, encrypts with AES-256-CBC/PKCS7, and authenticates the
+canonical header plus ciphertext with HMAC-SHA256 (encrypt-then-MAC). Older KV2
+private-alpha vaults remain readable for migration. The sealed file is written
+to:
 
 ```text
 ~/.config/krypton-vault/vault.kv
@@ -53,23 +56,26 @@ vault list, copy the first matching saved password, copy the edited password,
 save an encrypted local vault, upload the sealed vault blob to the VPS sync
 service, and restore a sealed vault from the VPS on a fresh client.
 
-This is good enough for the product slice to move forward, but it is not the
-final hardened crypto implementation. Before a public release, replace the
-prototype HMAC-based master-key derivation with a reviewed memory-hard KDF and
-get the vault format reviewed.
+This is a real hardening step over the KV2 prototype, but it is not the final
+design. Before a public release, move the KDF to Argon2id (or scrypt) and the
+cipher to a single AEAD primitive (XChaCha20-Poly1305 or AES-GCM), then get the
+format reviewed. Both changes need native bindings that the current compiler
+allowlist does not expose yet.
 
 ## Security Gates
 
 Before a hardened public release, the macOS build needs:
 
-- Argon2id or another reviewed memory-hard KDF for the master password.
-- Authenticated encryption for vault data, preferably XChaCha20-Poly1305 or
-  AES-GCM through a reviewed platform/library binding.
-- Secure random bytes from the OS.
-- A vault file format with version, KDF parameters, salt, nonce, ciphertext,
-  and auth tag.
-- Local auto-lock behavior.
-- No plaintext vault writes, logs, crash dumps, or sync payloads.
+- [ ] Argon2id or another reviewed memory-hard KDF for the master password.
+      KV3 currently uses PBKDF2-HMAC-SHA256 at 600,000 iterations.
+- [ ] Authenticated encryption for vault data, preferably XChaCha20-Poly1305 or
+      AES-GCM through a reviewed platform/library binding. KV3 currently uses
+      AES-256-CBC + HMAC-SHA256 encrypt-then-MAC.
+- [x] Secure random bytes from the OS.
+- [x] A vault file format with version, KDF parameters, salt, IV, ciphertext,
+      and auth tag (KV3).
+- [ ] Local auto-lock behavior.
+- [x] No plaintext vault writes, logs, crash dumps, or sync payloads.
 
 The Windows second build can reuse the OKUI product shell and wire the crypto
 through CNG (`bcrypt.dll`). Linux should come after the sync and vault format
@@ -174,22 +180,31 @@ update/conflict rules, not storage size.
 
 ## Local Vault Format
 
-The current sealed local file is text-shaped for easier debugging:
+KV3 is text-shaped for easier debugging. The tag covers the canonical header
+and ciphertext, so changing any field invalidates the vault:
 
 ```text
-KV2
-kdf=hmac-sha256-2block
-iterations=1
+KV3
+kdf=pbkdf2-hmac-sha256
+iterations=600000
 cipher=aes-256-cbc-hmac-sha256
 salt=...
 iv=...
-tag=...
 ciphertext=...
+tag=...
 ```
 
-`KV2` is a working prototype format, not the final public vault format. The
-next hardening pass should move the KDF to Argon2id, scrypt, or a reviewed
-platform-equivalent derivation before real customer data is trusted to it.
+`vaultOpen` still reads the older KV2 format for migration, but KV2 is never
+written. The next save after unlocking a legacy vault writes KV3. The format
+modules are split so the envelope can be shared across platforms:
+
+```text
+stdlib/vault_format.k          portable KV3 envelope and MAC input
+stdlib/vault_crypto_macos.k    macOS primitives and seal/open
+```
+
+The remaining public-release work is Argon2id (or scrypt) plus a single AEAD
+primitive, which requires new native bindings.
 
 The decrypted payload is currently structured JSON. Old `KVPLAIN1`
 tab-delimited local payloads can still be rendered by the app, but new saves
@@ -233,18 +248,25 @@ tools/vault_sync_smoke.sh
 
 ## Next Implementation Step
 
-The next real work item is hardening the native/shared crypto implementation
-while preserving a shared vault format:
+KV3 now carries the shared envelope, and macOS can seal/open it locally:
 
 ```text
 version
 kdf name and parameters
 salt
-nonce
+iv
 ciphertext
 auth tag
-revision
 ```
 
-Once macOS can seal/open that format locally, Windows can implement the same
-format through CNG and reuse the app flow.
+The remaining hardening is native work:
+
+- Add `CCCryptorCreateWithMode` to `headers/commoncrypto_macos.krh` and
+  allowlist `CCKeyDerivationPBKDF` plus `CCCryptorCreateWithMode` in the
+  Krypton backend, or vendor libsodium for `crypto_pwhash` and
+  XChaCha20-Poly1305.
+- Move the KDF to Argon2id (or scrypt) and the cipher to a single AEAD.
+- Reuse `stdlib/vault_format.k` for the Windows CNG and Linux backends.
+
+Once the macOS format is reviewed, Windows can implement the same envelope
+through CNG and reuse the app flow.

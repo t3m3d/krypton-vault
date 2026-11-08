@@ -1,16 +1,24 @@
 // vault_crypto_macos.k -- native macOS crypto for Krypton Vault.
 //
-// Uses Security.framework + CommonCrypto through native Mach-O imports:
+// KV3 hardened format:
 // - SecRandomCopyBytes for salt/IV
-// - HMAC-SHA256 derives 64 bytes using native CCHmac
-// - first 32 bytes encrypt with AES-256-CBC/PKCS7
-// - second 32 bytes authenticate with HMAC-SHA256 over ciphertext
+// - PBKDF2-HMAC-SHA256, default 600000 iterations, derives 64 bytes:
+//   bytes 0..31 encrypt key, bytes 32..63 MAC key
+// - AES-256-CBC/PKCS7 with a fresh random IV
+// - HMAC-SHA256 over the canonical KV3 header + ciphertext (encrypt-then-MAC)
+//
+// KV2 (private alpha) is still readable for migration but is never written.
+//
+// Residual gap before a public release: PBKDF2 is not memory-hard and this is
+// CBC+HMAC, not a single AEAD primitive. Argon2id (or scrypt) and
+// XChaCha20-Poly1305/AES-GCM require new native bindings; see README.
 
 module vault_crypto_macos
 
 import "head:commoncrypto_macos"
 import "head:security_macos"
 import "k:bitwise"
+import "k:vault_format"
 
 func _hexNib(c) {
     if c >= "0" && c <= "9" {
@@ -61,6 +69,16 @@ func _copyBuf(src, n) {
     emit out
 }
 
+func _bufRange(src, start, n) {
+    let out = bufNew(n)
+    let i = 0
+    while i < n {
+        bufSetByte(out, i, bufGetByte(src, start + i))
+        i += 1
+    }
+    emit out
+}
+
 func _joinBuf(a, an, b, bn) {
     let out = bufNew(an + bn)
     let i = 0
@@ -74,6 +92,15 @@ func _joinBuf(a, an, b, bn) {
         j += 1
     }
     emit out
+}
+
+func _xorInto(dst, src, n) {
+    let i = 0
+    while i < n {
+        bufSetByte(dst, i, bitXor(toInt(bufGetByte(dst, i)), toInt(bufGetByte(src, i))))
+        i += 1
+    }
+    emit "1"
 }
 
 func _bufToString(buf, n) {
@@ -103,69 +130,6 @@ func _randHex(nBytes) {
     emit _bytesToHex(buf, nBytes)
 }
 
-func vaultDeriveKeys(master, saltHex) {
-    let salt = _hexToBuf(saltHex)
-    let masterBuf = _stringToBuf(master)
-    let msg1 = bufNew(20)
-    let i = 0
-    while i < 16 {
-        bufSetByte(msg1, i, bufGetByte(salt, i))
-        i += 1
-    }
-    bufSetByte(msg1, 16, 0)
-    bufSetByte(msg1, 17, 0)
-    bufSetByte(msg1, 18, 0)
-    bufSetByte(msg1, 19, 1)
-    let b1 = bufNew(32)
-    CCHmac(2, masterBuf, len(master), msg1, 20, b1)
-
-    let msg2 = bufNew(20)
-    i = 0
-    while i < 16 {
-        bufSetByte(msg2, i, bufGetByte(salt, i))
-        i += 1
-    }
-    bufSetByte(msg2, 16, 0)
-    bufSetByte(msg2, 17, 0)
-    bufSetByte(msg2, 18, 0)
-    bufSetByte(msg2, 19, 2)
-    let b2 = bufNew(32)
-    CCHmac(2, masterBuf, len(master), msg2, 20, b2)
-    emit _bytesToHex(b1, 32) + _bytesToHex(b2, 32)
-}
-
-func _lineVal(blob, key) {
-    let needle = key + "="
-    let n = lineCount(blob)
-    let i = 0
-    while i < n {
-        let line = getLine(blob, i)
-        if startsWith(line, needle) { emit substring(line, len(needle), len(line)) }
-        i += 1
-    }
-    emit ""
-}
-
-func _sliceKey(keysHex, which) {
-    if which == "enc" {
-        emit _hexToBuf(substring(keysHex, 0, 64))
-    } else {
-        emit _hexToBuf(substring(keysHex, 64, 128))
-    }
-}
-
-func _hmacHex(macKey, dataBuf, dataLen) {
-    let out = bufNew(32)
-    CCHmac(2, macKey, 32, dataBuf, dataLen, out)
-    emit _bytesToHex(out, 32)
-}
-
-func _hmacHexWithKeyLen(keyBuf, keyLen, dataBuf, dataLen) {
-    let out = bufNew(32)
-    CCHmac(2, keyBuf, keyLen, dataBuf, dataLen, out)
-    emit _bytesToHex(out, 32)
-}
-
 func _constantEq(a, b) {
     if len(a) != len(b) { emit 0 }
     let diff = 0
@@ -181,17 +145,57 @@ func _constantEq(a, b) {
     }
 }
 
-func vaultSeal(master, plain) {
-    if len(master) < 12 { emit "" }
-    let salt = _randHex(16)
-    let ivHex = _randHex(16)
-    if salt == "" || ivHex == "" { emit "" }
-    let keys = vaultDeriveProbeBlock(master, salt, 1) + vaultDeriveProbeBlock(master, salt, 2)
-    if len(keys) < 128 { emit "" }
+// PBKDF2-HMAC-SHA256, one 32-byte output block.
+func _pbkdf2Block(pw, pwLen, salt, saltLen, rounds, blockIndex) {
+    let msg = bufNew(saltLen + 4)
+    let i = 0
+    while i < saltLen {
+        bufSetByte(msg, i, bufGetByte(salt, i))
+        i += 1
+    }
+    bufSetByte(msg, saltLen, 0)
+    bufSetByte(msg, saltLen + 1, 0)
+    bufSetByte(msg, saltLen + 2, (blockIndex / 256) % 256)
+    bufSetByte(msg, saltLen + 3, blockIndex % 256)
 
-    let encKey = _sliceKey(keys, "enc")
-    let macKey = _sliceKey(keys, "mac")
-    let iv = _hexToBuf(ivHex)
+    let u = bufNew(32)
+    CCHmac(2, pw, pwLen, msg, saltLen + 4, u)
+    let t = _copyBuf(u, 32)
+    let scratch = bufNew(32)
+    let r = 2
+    while r <= rounds {
+        CCHmac(2, pw, pwLen, u, 32, scratch)
+        _xorInto(t, scratch, 32)
+        let tmp = u
+        u = scratch
+        scratch = tmp
+        r += 1
+    }
+    emit t
+}
+
+// 64-byte derived key block: first half encrypt, second half MAC.
+func _pbkdf2Keys(master, saltHex, rounds) {
+    let salt = _hexToBuf(saltHex)
+    let pw = _stringToBuf(master)
+    let k1 = _pbkdf2Block(pw, len(master), salt, 16, rounds, 1)
+    let k2 = _pbkdf2Block(pw, len(master), salt, 16, rounds, 2)
+    emit _joinBuf(k1, 32, k2, 32)
+}
+
+func _hmacHex(macKey, dataBuf, dataLen) {
+    let out = bufNew(32)
+    CCHmac(2, macKey, 32, dataBuf, dataLen, out)
+    emit _bytesToHex(out, 32)
+}
+
+func _hmacHexStr(macKey, text) {
+    let out = bufNew(32)
+    CCHmac(2, macKey, 32, text, len(text), out)
+    emit _bytesToHex(out, 32)
+}
+
+func _aesEncrypt(encKey, iv, plain) {
     let cref = bufNew(8)
     let create = CCCryptorCreate(0, 0, 1, encKey, 32, iv, cref)
     if create != 0 { emit "" }
@@ -207,44 +211,18 @@ func vaultSeal(master, plain) {
     CCCryptorRelease(cryptor)
     if finalSt != 0 { emit "" }
     let n2 = toInt(bufGetQwordAt(finalMoved, 0))
-    let cipherBuf = _joinBuf(out, n1, finalOut, n2)
-    let cipherLen = n1 + n2
-    let cipherHex = _bytesToHex(cipherBuf, cipherLen)
-    let tag = _hmacHex(macKey, cipherBuf, cipherLen)
-    emit "KV2\n" +
-        "kdf=hmac-sha256-2block\n" +
-        "iterations=1\n" +
-        "cipher=aes-256-cbc-hmac-sha256\n" +
-        "salt=" + salt + "\n" +
-        "iv=" + ivHex + "\n" +
-        "tag=" + tag + "\n" +
-        "ciphertext=" + cipherHex + "\n"
+    let joined = _joinBuf(out, n1, finalOut, n2)
+    emit _bytesToHex(joined, n1 + n2)
 }
 
-func vaultOpen(master, sealed) {
-    if !startsWith(sealed, "KV2\n") { emit "" }
-    let salt = _lineVal(sealed, "salt")
-    let ivHex = _lineVal(sealed, "iv")
-    let tag = _lineVal(sealed, "tag")
-    let cipherHex = _lineVal(sealed, "ciphertext")
-    if salt == "" || ivHex == "" || tag == "" || cipherHex == "" { emit "" }
-    let keys = vaultDeriveProbeBlock(master, salt, 1) + vaultDeriveProbeBlock(master, salt, 2)
-    if len(keys) < 128 { emit "" }
-    let encKey = _sliceKey(keys, "enc")
-    let macKey = _sliceKey(keys, "mac")
-    let cipher = _hexToBuf(cipherHex)
-    let cipherLen = len(cipherHex) / 2
-    let actual = _hmacHex(macKey, cipher, cipherLen)
-    if _constantEq(actual, tag) == 0 { emit "" }
-
-    let iv = _hexToBuf(ivHex)
+func _aesDecrypt(encKey, iv, cipherBuf, cipherLen) {
     let cref = bufNew(8)
     let create = CCCryptorCreate(1, 0, 1, encKey, 32, iv, cref)
     if create != 0 { emit "" }
     let cryptor = bufGetQwordAt(cref, 0)
     let out = bufNew(cipherLen + 16)
     let moved = bufNew(8)
-    let st = CCCryptorUpdate(cryptor, cipher, cipherLen, out, cipherLen + 16, moved)
+    let st = CCCryptorUpdate(cryptor, cipherBuf, cipherLen, out, cipherLen + 16, moved)
     if st != 0 { CCCryptorRelease(cryptor)  emit "" }
     let n1 = toInt(bufGetQwordAt(moved, 0))
     let finalOut = bufNew(16)
@@ -253,36 +231,74 @@ func vaultOpen(master, sealed) {
     CCCryptorRelease(cryptor)
     if finalSt != 0 { emit "" }
     let n2 = toInt(bufGetQwordAt(finalMoved, 0))
-    emit _bufToString(out, n1) + _bufToString(finalOut, n2)
+    let joined = _joinBuf(out, n1, finalOut, n2)
+    emit _bufToString(joined, n1 + n2)
 }
 
-func localVaultPath() {
-    emit environ("HOME") + "/.config/krypton-vault/vault.kv"
-}
-
-func sealLocalVault(master, plain) {
-    let sealed = vaultSeal(master, plain)
-    if sealed == "" { emit "0" }
-    exec("mkdir -p \"" + environ("HOME") + "/.config/krypton-vault\"")
-    writeFile(localVaultPath(), sealed)
+func _validKv3(sealed) {
+    if !startsWith(sealed, "KV3\n") { emit "0" }
+    if kvLineVal(sealed, "kdf") != kv3Kdf() { emit "0" }
+    if kvLineVal(sealed, "cipher") != kv3Cipher() { emit "0" }
+    let iterText = kvLineVal(sealed, "iterations")
+    if kvIsDigits(iterText) != "1" { emit "0" }
+    if toInt(iterText) < toInt(kv3MinIterations()) { emit "0" }
+    let salt = kvLineVal(sealed, "salt")
+    if len(salt) != 32 || kvIsHex(salt) != "1" { emit "0" }
+    let iv = kvLineVal(sealed, "iv")
+    if len(iv) != 32 || kvIsHex(iv) != "1" { emit "0" }
+    let tag = kvLineVal(sealed, "tag")
+    if len(tag) != 64 || kvIsHex(tag) != "1" { emit "0" }
+    let ct = kvLineVal(sealed, "ciphertext")
+    if len(ct) == 0 || len(ct) % 32 != 0 || kvIsHex(ct) != "1" { emit "0" }
     emit "1"
 }
 
-func openLocalVault(master) {
-    emit vaultOpen(master, readFile(localVaultPath()))
+func vaultSeal(master, plain) {
+    if len(master) < 12 { emit "" }
+    let roundsText = kv3DefaultIterations()
+    let rounds = toInt(roundsText)
+    let salt = _randHex(16)
+    let ivHex = _randHex(16)
+    if salt == "" || ivHex == "" { emit "" }
+
+    let keys = _pbkdf2Keys(master, salt, rounds)
+    let encKey = _bufRange(keys, 0, 32)
+    let macKey = _bufRange(keys, 32, 32)
+    let iv = _hexToBuf(ivHex)
+
+    let cipherHex = _aesEncrypt(encKey, iv, plain)
+    if cipherHex == "" { emit "" }
+
+    let macInput = kv3MacInput(kv3Kdf(), roundsText, kv3Cipher(), salt, ivHex, cipherHex)
+    let tag = _hmacHexStr(macKey, macInput)
+    emit kv3Serialize(macInput, tag)
 }
 
-func vaultDeriveKeys2(master, saltHex) {
-    emit vaultDeriveProbeBlock(master, saltHex, 1) + vaultDeriveProbeBlock(master, saltHex, 2)
+func _openKv3(master, sealed) {
+    if _validKv3(sealed) != "1" { emit "" }
+    let iterText = kvLineVal(sealed, "iterations")
+    let salt = kvLineVal(sealed, "salt")
+    let ivHex = kvLineVal(sealed, "iv")
+    let tag = kvLineVal(sealed, "tag")
+    let cipherHex = kvLineVal(sealed, "ciphertext")
+
+    let keys = _pbkdf2Keys(master, salt, toInt(iterText))
+    let encKey = _bufRange(keys, 0, 32)
+    let macKey = _bufRange(keys, 32, 32)
+
+    let macInput = kv3MacInput(kv3Kdf(), iterText, kv3Cipher(), salt, ivHex, cipherHex)
+    let actual = _hmacHexStr(macKey, macInput)
+    if _constantEq(actual, tag) == 0 { emit "" }
+    if sealed != kv3Serialize(macInput, tag) { emit "" }
+
+    let cipher = _hexToBuf(cipherHex)
+    let cipherLen = len(cipherHex) / 2
+    let iv = _hexToBuf(ivHex)
+    emit _aesDecrypt(encKey, iv, cipher, cipherLen)
 }
 
-func vaultDeriveProbe(master, saltHex) {
-    let salt = _hexToBuf(saltHex)
-    let masterBuf = _stringToBuf(master)
-    emit _hmacHexWithKeyLen(masterBuf, len(master), salt, 16)
-}
-
-func vaultDeriveProbeBlock(master, saltHex, blockIndex) {
+// Legacy KV2 derivation, read-only. Kept only so private-alpha vaults migrate.
+func _legacyDeriveBlock(master, saltHex, blockIndex) {
     let salt = _hexToBuf(saltHex)
     let masterBuf = _stringToBuf(master)
     let msg = bufNew(20)
@@ -295,5 +311,67 @@ func vaultDeriveProbeBlock(master, saltHex, blockIndex) {
     bufSetByte(msg, 17, 0)
     bufSetByte(msg, 18, 0)
     bufSetByte(msg, 19, blockIndex)
-    emit _hmacHexWithKeyLen(masterBuf, len(master), msg, 20)
+    let out = bufNew(32)
+    CCHmac(2, masterBuf, len(master), msg, 20, out)
+    emit _bytesToHex(out, 32)
+}
+
+func _openKv2Legacy(master, sealed) {
+    let salt = kvLineVal(sealed, "salt")
+    let ivHex = kvLineVal(sealed, "iv")
+    let tag = kvLineVal(sealed, "tag")
+    let cipherHex = kvLineVal(sealed, "ciphertext")
+    if len(salt) != 32 || kvIsHex(salt) != "1" { emit "" }
+    if len(ivHex) != 32 || kvIsHex(ivHex) != "1" { emit "" }
+    if len(tag) != 64 || kvIsHex(tag) != "1" { emit "" }
+    if len(cipherHex) == 0 || len(cipherHex) % 32 != 0 || kvIsHex(cipherHex) != "1" { emit "" }
+    let encKey = _hexToBuf(_legacyDeriveBlock(master, salt, 1))
+    let macKey = _hexToBuf(_legacyDeriveBlock(master, salt, 2))
+    let cipher = _hexToBuf(cipherHex)
+    let cipherLen = len(cipherHex) / 2
+    let actual = _hmacHex(macKey, cipher, cipherLen)
+    if _constantEq(actual, tag) == 0 { emit "" }
+    let iv = _hexToBuf(ivHex)
+    emit _aesDecrypt(encKey, iv, cipher, cipherLen)
+}
+
+func vaultOpen(master, sealed) {
+    if startsWith(sealed, "KV3\n") { emit _openKv3(master, sealed) }
+    if startsWith(sealed, "KV2\n") { emit _openKv2Legacy(master, sealed) }
+    emit ""
+}
+
+func vaultIsSealed(sealed) {
+    if startsWith(sealed, "KV3\n") { emit "1" }
+    if startsWith(sealed, "KV2\n") { emit "1" }
+    emit "0"
+}
+
+func localVaultPath() {
+    emit environ("HOME") + "/.config/krypton-vault/vault.kv"
+}
+
+func sealLocalVault(master, plain) {
+    let sealed = vaultSeal(master, plain)
+    if sealed == "" { emit "0" }
+    let dir = environ("HOME") + "/.config/krypton-vault"
+    let path = localVaultPath()
+    let tmp = path + ".tmp"
+    exec("mkdir -p \"" + dir + "\" && chmod 700 \"" + dir + "\"")
+    // writeFile has no useful return value; confirm the bytes landed on disk.
+    writeFile(tmp, sealed)
+    if readFile(tmp) != sealed { emit "0" }
+    exec("chmod 600 \"" + tmp + "\"")
+    exec("mv -f \"" + tmp + "\" \"" + path + "\"")
+    exec("chmod 600 \"" + path + "\"")
+    emit "1"
+}
+
+func openLocalVault(master) {
+    let sealed = readFile(localVaultPath())
+    let plain = vaultOpen(master, sealed)
+    if plain != "" && startsWith(sealed, "KV2\n") {
+        sealLocalVault(master, plain)
+    }
+    emit plain
 }

@@ -36,7 +36,8 @@ trap cleanup_all EXIT
 mkdir -p "$OVERLAY/stdlib" "$OVERLAY/headers"
 for file in "$LANG_ROOT"/stdlib/*; do ln -s "$file" "$OVERLAY/stdlib/$(basename "$file")"; done
 for file in "$LANG_ROOT"/headers/*; do ln -s "$file" "$OVERLAY/headers/$(basename "$file")"; done
-ln -sf "$ROOT/stdlib/vault_crypto_macos.k" "$OVERLAY/stdlib/vault_crypto_macos.k"
+for file in "$ROOT"/stdlib/*.k; do [ -e "$file" ] || continue; ln -sf "$file" "$OVERLAY/stdlib/$(basename "$file")"; done
+for file in "$ROOT"/headers/*.krh; do [ -e "$file" ] || continue; ln -sf "$file" "$OVERLAY/headers/$(basename "$file")"; done
 
 env KRYPTON_ROOT="$OVERLAY" "$FE" "$ROOT/tests/vault_format_smoke.ks" > /tmp/krypton-vault-format-smoke.kir
 "$HOST_BIN" --ir /tmp/krypton-vault-format-smoke.kir /tmp/krypton-vault-format-smoke
@@ -45,7 +46,9 @@ chmod +x /tmp/krypton-vault-format-smoke
 env KRYPTON_ROOT="$OVERLAY" "$FE" "$ROOT/tests/vault_crypto_smoke.ks" > /tmp/krypton-vault-crypto-smoke.kir
 "$HOST_BIN" --ir /tmp/krypton-vault-crypto-smoke.kir /tmp/krypton-vault-crypto-smoke
 chmod +x /tmp/krypton-vault-crypto-smoke
-/tmp/krypton-vault-crypto-smoke
+SMOKE_HOME="$(mktemp -d /tmp/krypton-vault-home.XXXXXX)"
+HOME="$SMOKE_HOME" /tmp/krypton-vault-crypto-smoke
+rm -rf "$SMOKE_HOME"
 KRYPTON_LANG_ROOT="$LANG_ROOT" "$ROOT/scripts/build-macos.sh"
 python3 -m py_compile tools/vault_sync_server.py
 

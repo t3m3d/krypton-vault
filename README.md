@@ -7,7 +7,8 @@ locally; the VPS sync service stores only opaque encrypted blobs.
 
 ```text
 app/krypton_vault.ks                 macOS app
-stdlib/vault_crypto_macos.k          Vault crypto module
+stdlib/vault_format.k                Portable KV3 envelope
+stdlib/vault_crypto_macos.k          Native macOS crypto backend
 tests/                               Vault and crypto smoke tests
 tools/                               Sync server, smoke test, verifier
 deploy/                              systemd, env, and Caddy configuration
@@ -48,6 +49,9 @@ KRYPTON_VAULT_TOKEN='same-token-as-the-server' \
 tools/vault_sync_smoke.sh
 ```
 
-The current crypto format is a private-alpha prototype. Do not store real
-passwords in it until the master-key derivation is upgraded to a reviewed
-memory-hard KDF and the vault format receives a security review.
+KV3 derives keys with PBKDF2-HMAC-SHA256 (600,000 iterations by default) and
+authenticates AES-256-CBC ciphertext with HMAC-SHA256 (encrypt-then-MAC). That
+is a hardening step, not a finished design: it is not memory-hard and not a
+single AEAD primitive. Treat this as a private alpha and do not store real
+passwords until Argon2id (or scrypt) and an AEAD (XChaCha20-Poly1305 or
+AES-GCM) land and the format receives a security review.
