@@ -327,6 +327,141 @@ func oaInfo(bin) {
     emit "1"
 }
 
+func oaDirExists(p) {
+    if shellRun("test -d " + oaQuote(p)) == "0" { emit 1 }
+    emit 0
+}
+
+func oaTargetExists(p) {
+    if oaFileExists(p) == 1 { emit 1 }
+    if oaDirExists(p) == 1 { emit 1 }
+    emit 0
+}
+
+func oaTrimPath(p) {
+    let out = trim(p)
+    while len(out) > 1 && out[len(out) - 1] == "/" {
+        out = substring(out, 0, len(out) - 1)
+    }
+    emit out
+}
+
+func oaIsAppBundle(p) {
+    let path = oaTrimPath(p)
+    if oaDirExists(path) == 1 && endsWith(path, ".app") == 1 { emit 1 }
+    emit 0
+}
+
+// Accept either an executable or an .app bundle and return the Mach-O path.
+// The bundle's Info.plist is authoritative for the executable name.
+func oaResolveBinary(p) {
+    let path = oaTrimPath(p)
+    if oaDirExists(path) != 1 { emit path }
+    let plist = path + "/Contents/Info.plist"
+    if oaFileExists(plist) != 1 { emit path }
+    let exe = trim(exec("plutil -extract CFBundleExecutable raw -o - " + oaQuote(plist) + " 2>/dev/null"))
+    if exe == "" { emit path }
+    emit path + "/Contents/MacOS/" + exe
+}
+
+func oaBundle(p) {
+    let path = oaTrimPath(p)
+    if oaIsAppBundle(path) != 1 {
+        print("not an app bundle: " + path)
+        emit "1"
+    }
+    print("== bundle ==")
+    print("path: " + path)
+    print("executable: " + oaResolveBinary(path))
+    print("size: " + trim(exec("du -sh " + oaQuote(path) + " 2>/dev/null | cut -f1")))
+    print("")
+    print("== Info.plist ==")
+    let plist = path + "/Contents/Info.plist"
+    if oaFileExists(plist) != 1 {
+        print("(missing)")
+    } else {
+        print(trim(exec("plutil -p " + oaQuote(plist) + " 2>&1")))
+    }
+    print("")
+    print("== layout ==")
+    print(trim(exec("find " + oaQuote(path) + " -maxdepth 4 -print 2>/dev/null | sort")))
+    emit "1"
+}
+
+func oaSecurityExtra(p) {
+    let path = oaTrimPath(p)
+    let bin = oaResolveBinary(path)
+    let sig = trim(exec("codesign -dv --verbose=4 " + oaQuote(bin) + " 2>&1"))
+    print("== gatekeeper ==")
+    print(trim(exec("spctl -a -vv " + oaQuote(path) + " 2>&1")))
+    print("")
+    print("== hardened runtime ==")
+    if contains(sig, "runtime") == 1 {
+        print("yes (codesign flags include runtime)")
+    } else {
+        print("no (runtime flag absent; ad-hoc builds are expected here)")
+    }
+    print("")
+    print("== notarization ticket ==")
+    let staple = trim(exec("xcrun stapler validate " + oaQuote(path) + " 2>&1 | tail -3"))
+    if staple == "" { print("(stapler unavailable)") } else { print(staple) }
+    emit "1"
+}
+
+func oaSecurity(p) {
+    let path = oaTrimPath(p)
+    let bin = oaResolveBinary(path)
+    print("== code signature ==")
+    let sig = trim(exec("codesign -dv --verbose=4 " + oaQuote(bin) + " 2>&1"))
+    if sig == "" { print("(none)") } else { print(sig) }
+    print("")
+    print("== entitlements ==")
+    let ent = trim(exec("codesign -d --entitlements - " + oaQuote(bin) + " 2>&1"))
+    if ent == "" { print("(none)") } else { print(ent) }
+    print("")
+    oaSecurityExtra(path)
+    emit "1"
+}
+
+func oaInteresting(bin, title, pattern) {
+    print("== " + title + " ==")
+    let out = trim(exec("strings -a " + oaQuote(bin) + " | grep -E " + oaQuote(pattern) +
+        " | sort -u | head -40"))
+    if out == "" { print("(none)") } else { print(out) }
+    print("")
+    emit "1"
+}
+
+func oaStrings(bin) {
+    oaInteresting(bin, "urls", "^(https?|ftp)://")
+    oaInteresting(bin, "file paths", "^(/Users/|/tmp/|/private/|/Library/|/System/|~/)")
+    oaInteresting(bin, "version strings", "[0-9]+\\.[0-9]+\\.[0-9]+")
+    oaInteresting(bin, "environment variables", "^[A-Z_][A-Z0-9_]{2,}$")
+    oaInteresting(bin, "objc argument selectors", "^[A-Za-z][A-Za-z0-9_]*(:[A-Za-z0-9_]+)*:$")
+    emit "1"
+}
+
+func oaReport(p) {
+    let path = oaTrimPath(p)
+    let bin = oaResolveBinary(path)
+    print("Krypton Inspector")
+    print("target: " + path)
+    print("binary: " + bin)
+    print("")
+    if oaIsAppBundle(path) == 1 {
+        oaBundle(path)
+        print("")
+    }
+    oaInfo(bin)
+    print("")
+    oaSecurityExtra(path)
+    print("")
+    oaStrings(bin)
+    print("== objc scan ==")
+    oaScan(bin, "", 0, 0, "", 0)
+    emit "1"
+}
+
 func oaDump(classes, selectors) {
     let nC = lineCount(classes)
     let i = 0
@@ -353,9 +488,13 @@ func oaDump(classes, selectors) {
 
 func oaUsage() {
     print("usage:")
-    print("  objc-audit scan <binary> [--classes A,B] [--allow sel1,sel2]")
+    print("  objc-audit scan <binary|app> [--classes A,B] [--allow sel1,sel2]")
     print("                  [--all] [--quiet] [--strict]")
-    print("  objc-audit info <binary>")
+    print("  objc-audit info <binary|app>")
+    print("  objc-audit bundle <app>")
+    print("  objc-audit security <binary|app>")
+    print("  objc-audit strings <binary|app>")
+    print("  objc-audit report <binary|app>")
     print("  objc-audit dump --class NAME --selectors sel1,sel2 [--class NAME ...]")
     emit "1"
 }
@@ -400,6 +539,7 @@ just run {
             oaUsage()
             exit(1)
         }
+        bin = oaResolveBinary(bin)
         if oaFileExists(bin) != 1 {
             printErr("objc-audit: no such file: " + bin)
             exit(1)
@@ -421,12 +561,46 @@ just run {
             oaUsage()
             exit(1)
         }
-        let bin = arg(1)
+        let bin = oaResolveBinary(arg(1))
         if oaFileExists(bin) != 1 {
             printErr("objc-audit: no such file: " + bin)
             exit(1)
         }
         oaInfo(bin)
+        exit(0)
+    }
+
+    if cmd == "bundle" {
+        if argc < 2 {
+            oaUsage()
+            exit(1)
+        }
+        let path = oaTrimPath(arg(1))
+        if oaDirExists(path) != 1 {
+            printErr("objc-audit: not a directory: " + path)
+            exit(1)
+        }
+        oaBundle(path)
+        exit(0)
+    }
+
+    if cmd == "security" || cmd == "strings" || cmd == "report" {
+        if argc < 2 {
+            oaUsage()
+            exit(1)
+        }
+        let path = oaTrimPath(arg(1))
+        if oaTargetExists(path) != 1 {
+            printErr("objc-audit: no such file or directory: " + path)
+            exit(1)
+        }
+        if cmd == "security" {
+            oaSecurity(path)
+        } else if cmd == "strings" {
+            oaStrings(oaResolveBinary(path))
+        } else {
+            oaReport(path)
+        }
         exit(0)
     }
 

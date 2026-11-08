@@ -6,7 +6,8 @@ locally; the VPS sync service stores only opaque encrypted blobs.
 ## Repository layout
 
 ```text
-app/krypton_vault.ks                 macOS app
+app/krypton_vault.ks                 macOS vault app
+app/krypton_inspector.ks             macOS binary/ABI inspector
 stdlib/vault_format.k                Portable KV3 envelope
 stdlib/vault_model.k                 Portable typed payload model
 stdlib/vault_crypto_macos.k          Native macOS crypto backend
@@ -36,8 +37,23 @@ tools/vault_verify.sh
 ```
 
 The verifier checks the vault format, native macOS seal/open, app bundle build,
-the Objective-C selector/ABI audit, sync service syntax, and live
+the Objective-C selector/ABI audit for both apps, sync service syntax, and live
 upload/fetch/restore behavior.
+
+## Inspector app
+
+`app/krypton_inspector.ks` is a native macOS front end for `objc-audit`, usable
+on any Krypton binary or `.app` bundle:
+
+```bash
+scripts/build-inspector.sh
+open dist/krypton-inspector.app
+```
+
+Pick an app or binary, then use Overview, Selectors, Security, Strings, or
+Bundle. The app bundles `objc-audit` as an auxiliary executable, so the GUI and
+CLI produce identical reports. This first slice covers metadata, ABI, and
+binary inspection; it is not a disassembler, decompiler, or debugger.
 
 ## Objective-C ABI audit
 

@@ -56,8 +56,11 @@ rm -rf "$SMOKE_HOME"
 KRYPTON_LANG_ROOT="$LANG_ROOT" "$ROOT/scripts/build-macos.sh"
 KRYPTON_LANG_ROOT="$LANG_ROOT" "$ROOT/scripts/build-objc-audit.sh"
 APP_BIN="$ROOT/dist/krypton-vault.app/Contents/MacOS/krypton-vault"
-"$ROOT/dist/objc-audit" scan "$APP_BIN" --strict --quiet \
-  --allow "objk_dispatch:,krTableClick:,krTableDoubleClick:,controlTextDidChange:,windowShouldClose:,windowWillClose:,application:openFile:,applicationShouldHandleReopen:hasVisibleWindows:"
+ALLOW="objk_dispatch:,krTableClick:,krTableDoubleClick:,controlTextDidChange:,windowShouldClose:,windowWillClose:,application:openFile:,applicationShouldHandleReopen:hasVisibleWindows:"
+"$ROOT/dist/objc-audit" scan "$APP_BIN" --strict --quiet --allow "$ALLOW"
+KRYPTON_LANG_ROOT="$LANG_ROOT" "$ROOT/scripts/build-inspector.sh"
+INSPECTOR_BIN="$ROOT/dist/krypton-inspector.app/Contents/MacOS/krypton-inspector"
+"$ROOT/dist/objc-audit" scan "$INSPECTOR_BIN" --strict --quiet --allow "$ALLOW"
 python3 -m py_compile tools/vault_sync_server.py
 
 rm -rf "$DATA_DIR"

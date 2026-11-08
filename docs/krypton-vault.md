@@ -240,10 +240,10 @@ Full local verification:
 tools/vault_verify.sh
 ```
 
-That builds the macOS app, checks the structured payload model, checks
-seal/open crypto, audits the app's Objective-C selectors against the runtime,
-syntax-checks the VPS daemon, starts a local sync server, exercises
-health/upload/fetch/raw restore, and shuts the server down.
+That builds the macOS vault app and the inspector app, checks the structured
+payload model, checks seal/open crypto, audits both apps' Objective-C selectors
+against the runtime, syntax-checks the VPS daemon, starts a local sync server,
+exercises health/upload/fetch/raw restore, and shuts the server down.
 
 Individual local checks:
 
@@ -290,6 +290,40 @@ Krypton backend allowlist, the scanner only sees classes named by the binary's
 strings plus a supplemental AppKit list. Adding those runtime calls (or an
 out-of-process helper) would allow full class/method enumeration and an
 inherited-method view.
+
+## Inspector App
+
+The GUI inspector is a native shell over the same audit engine:
+
+```text
+app/krypton_inspector.ks       AppKit UI
+scripts/build-inspector.sh     builds and bundles dist/objc-audit
+```
+
+Build and run it with:
+
+```bash
+scripts/build-inspector.sh
+open dist/krypton-inspector.app
+```
+
+The app accepts an `.app` bundle or a Mach-O binary. Buttons map directly to
+CLI subcommands:
+
+```text
+Overview    objc-audit report
+Selectors   objc-audit scan
+Security    objc-audit security
+Strings     objc-audit strings
+Bundle      objc-audit bundle
+```
+
+The GUI resolves the bundled `objc-audit` helper with
+`bundledExecutable("objc-audit")` and captures its output with `exec`, so there
+is one implementation of the inspection logic. The first slice intentionally
+stops at metadata, ABI, and binary inspection. It does not disassemble,
+decompile, or attach a debugger; those would be separate tools with much larger
+surface area.
 
 For the sync server:
 
