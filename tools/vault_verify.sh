@@ -54,6 +54,10 @@ SMOKE_HOME="$(mktemp -d /tmp/krypton-vault-home.XXXXXX)"
 HOME="$SMOKE_HOME" /tmp/krypton-vault-crypto-smoke
 rm -rf "$SMOKE_HOME"
 KRYPTON_LANG_ROOT="$LANG_ROOT" "$ROOT/scripts/build-macos.sh"
+KRYPTON_LANG_ROOT="$LANG_ROOT" "$ROOT/scripts/build-objc-audit.sh"
+APP_BIN="$ROOT/dist/krypton-vault.app/Contents/MacOS/krypton-vault"
+"$ROOT/dist/objc-audit" scan "$APP_BIN" --strict --quiet \
+  --allow "objk_dispatch:,krTableClick:,krTableDoubleClick:,controlTextDidChange:,windowShouldClose:,windowWillClose:,application:openFile:,applicationShouldHandleReopen:hasVisibleWindows:"
 python3 -m py_compile tools/vault_sync_server.py
 
 rm -rf "$DATA_DIR"

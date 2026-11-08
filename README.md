@@ -11,7 +11,7 @@ stdlib/vault_format.k                Portable KV3 envelope
 stdlib/vault_model.k                 Portable typed payload model
 stdlib/vault_crypto_macos.k          Native macOS crypto backend
 tests/                               Vault and crypto smoke tests
-tools/                               Sync server, smoke test, verifier
+tools/                               Sync server, smoke test, verifier, ObjC audit
 deploy/                              systemd, env, and Caddy configuration
 docs/krypton-vault.md                Product and deployment notes
 ```
@@ -36,7 +36,38 @@ tools/vault_verify.sh
 ```
 
 The verifier checks the vault format, native macOS seal/open, app bundle build,
-sync service syntax, and live upload/fetch/restore behavior.
+the Objective-C selector/ABI audit, sync service syntax, and live
+upload/fetch/restore behavior.
+
+## Objective-C ABI audit
+
+Krypton sends AppKit selectors as plain strings, so the compiler cannot catch a
+typo or a receiver that does not implement a method. `tools/objc_audit.ks`
+builds to `dist/objc-audit` and checks those strings against the real runtime:
+
+```bash
+scripts/build-objc-audit.sh
+
+# Resolve every selector-like string in the app binary and print type encodings.
+dist/objc-audit scan dist/krypton-vault.app/Contents/MacOS/krypton-vault
+
+# Fail the build on unresolved argument selectors (callbacks are allowlisted).
+dist/objc-audit scan dist/krypton-vault.app/Contents/MacOS/krypton-vault \
+  --strict --quiet --allow 'windowShouldClose:,controlTextDidChange:'
+
+# Inspect load commands, dylibs, signature, entitlements, and imports.
+dist/objc-audit info dist/krypton-vault.app/Contents/MacOS/krypton-vault
+
+# Query specific classes/selectors for their ABI encodings.
+dist/objc-audit dump --class NSWindow --selectors setTitle:,title
+```
+
+`scan` reports `v@:@`-style encodings from `NSMethodSignature`, so it doubles as
+a check that argument counts and struct layouts match the call sites. Use
+`--all` to also probe bare no-argument identifiers. `--strict` exits non-zero
+when an argument selector resolves to no class and is not in `--allow`.
+Selectors added at runtime with `class_addMethod` are expected to be listed in
+the allow list; the verifier keeps the app's callback selectors there.
 
 ## VPS
 

@@ -241,8 +241,9 @@ tools/vault_verify.sh
 ```
 
 That builds the macOS app, checks the structured payload model, checks
-seal/open crypto, syntax-checks the VPS daemon, starts a local sync server,
-exercises health/upload/fetch/raw restore, and shuts the server down.
+seal/open crypto, audits the app's Objective-C selectors against the runtime,
+syntax-checks the VPS daemon, starts a local sync server, exercises
+health/upload/fetch/raw restore, and shuts the server down.
 
 Individual local checks:
 
@@ -250,6 +251,45 @@ Individual local checks:
 KRYPTON_LANG_ROOT=../krypton tools/vault_verify.sh
 python3 -m py_compile tools/vault_sync_server.py
 ```
+
+## Objective-C ABI Audit
+
+AppKit calls in Krypton are strings: `msg(view, "setTitle:")`. The compiler
+cannot verify that a selector exists, that the receiver implements it, or that
+the argument count and types match. `tools/objc_audit.ks` closes that gap for
+the app binary:
+
+```bash
+scripts/build-objc-audit.sh
+dist/objc-audit scan dist/krypton-vault.app/Contents/MacOS/krypton-vault
+dist/objc-audit info dist/krypton-vault.app/Contents/MacOS/krypton-vault
+dist/objc-audit dump --class NSWindow --selectors setTitle:,title
+```
+
+`scan` extracts selector-shaped strings, resolves the classes the binary
+references through `objc_lookUpClass`, and prints the type encoding reported by
+`NSMethodSignature` (for example `v@:@` for a one-object setter). `info` prints
+file type, linked dylibs, rpaths, code signature, entitlements, imported
+symbols, and the selector inventory. `dump` probes an explicit class/selector
+list.
+
+Strict mode fails on argument selectors that no loaded class implements:
+
+```bash
+dist/objc-audit scan dist/krypton-vault.app/Contents/MacOS/krypton-vault \
+  --strict --quiet --allow 'windowShouldClose:,controlTextDidChange:'
+```
+
+Selectors registered at runtime with `class_addMethod` are invisible to the
+scanner, so the verifier passes the app's callback selectors via `--allow`.
+`--all` additionally probes bare identifiers; the default only checks
+selectors ending in `:` to avoid matching ordinary UI text.
+
+Known limit: without `objc_getClassList` and `class_copyMethodList` in the
+Krypton backend allowlist, the scanner only sees classes named by the binary's
+strings plus a supplemental AppKit list. Adding those runtime calls (or an
+out-of-process helper) would allow full class/method enumeration and an
+inherited-method view.
 
 For the sync server:
 
