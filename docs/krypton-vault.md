@@ -51,10 +51,11 @@ to:
 ~/.config/krypton-vault/vault.kv
 ```
 
-The UI can unlock, add items, delete the first search match, filter the visible
-vault list, copy the first matching saved password, copy the edited password,
-save an encrypted local vault, upload the sealed vault blob to the VPS sync
-service, and restore a sealed vault from the VPS on a fresh client.
+The UI can unlock, add logins or secure notes, delete the first search match,
+filter the visible vault list by title/user/site/note text, copy the first
+matching saved password, copy the edited password, save an encrypted local
+vault, upload the sealed vault blob to the VPS sync service, and restore a
+sealed vault from the VPS on a fresh client.
 
 This is a real hardening step over the KV2 prototype, but it is not the final
 design. Before a public release, move the KDF to Argon2id (or scrypt) and the
@@ -206,18 +207,30 @@ stdlib/vault_crypto_macos.k    macOS primitives and seal/open
 The remaining public-release work is Argon2id (or scrypt) plus a single AEAD
 primitive, which requires new native bindings.
 
-The decrypted payload is currently structured JSON. Old `KVPLAIN1`
-tab-delimited local payloads can still be rendered by the app, but new saves
-use:
+The decrypted payload is structured JSON. Old `KVPLAIN1` tab-delimited local
+payloads are migrated to JSON on unlock, so the next save cannot drop legacy
+items. New saves use:
 
 ```text
 KVJSON1
-{"version":1,"items":[{"title":"...","username":"...","url":"...","password":"..."}]}
+{"version":1,"items":[
+  {"type":"login","title":"...","username":"...","url":"...","password":"..."},
+  {"type":"note","title":"...","notes":"..."}
+]}
 ```
 
-This JSON shape is still intentionally small. Sharing, attachments, item IDs,
-timestamps, and conflict resolution should extend this payload before browser
-extensions or mobile clients.
+Items written before the `type` field existed are treated as logins, so older
+JSON payloads keep working. The payload model lives in a portable module with
+no native calls and no UI:
+
+```text
+stdlib/vault_model.k          typed items, search, remove, legacy migration
+```
+
+The macOS and iOS apps share that module; only the crypto backend and the UI
+are platform-specific. This JSON shape is still intentionally small. Item IDs,
+timestamps, custom fields, attachments, and conflict resolution should extend
+this payload before browser extensions or mobile clients.
 
 ## Verification
 
@@ -227,7 +240,7 @@ Full local verification:
 tools/vault_verify.sh
 ```
 
-That builds the macOS app, checks the structured vault format, checks
+That builds the macOS app, checks the structured payload model, checks
 seal/open crypto, syntax-checks the VPS daemon, starts a local sync server,
 exercises health/upload/fetch/raw restore, and shuts the server down.
 

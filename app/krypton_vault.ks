@@ -5,6 +5,7 @@
 // sync. Harden the prototype KDF before a public release.
 
 import "k:okui"
+import "k:objc"
 import "k:vault_crypto_macos"
 import "k:vault_model"
 import "k:json_emit"
@@ -14,6 +15,19 @@ func dq() { emit fromCharCode(34) }
 func bs() { emit fromCharCode(92) }
 
 func appH() { emit sharedApp() }
+
+// doSet stores raw Krypton strings as Objective-C associated objects, which
+// crashes objc_retain. Box string state as NSString and unbox on read.
+func setTextState(key, value) {
+    doSet(appH(), key, nsString(value))
+    emit "1"
+}
+
+func textState(key) {
+    let boxed = get(appH(), key)
+    if boxed == 0 { emit "" }
+    emit msg(boxed, "UTF8String")
+}
 
 func cleanLine(s) {
     let t = trim(s)
@@ -121,10 +135,10 @@ func entryLine(title, user, url) {
 
 func appendVaultLine(line) {
     let vault = get(appH(), "vault")
-    let count = get(appH(), "itemCount")
+    let count = textState("itemCount")
     if count == "" || count == "0" {
         doTextBox(vault, "")
-        doSet(appH(), "itemCount", "1")
+        setTextState("itemCount", "1")
     }
     doAppend(vault, line)
     if len(line) == 0 || line[len(line) - 1] != "\n" { doAppend(vault, "\n") }
@@ -136,7 +150,7 @@ func renderVaultWithFilter(plain, query) {
     let vault = get(appH(), "vault")
     let q = trim(query)
     doTextBox(vault, "")
-    doSet(appH(), "itemCount", "0")
+    setTextState("itemCount", "0")
     if vmIsJson(plain) == "1" {
         let parsed = jpParse(vmPlainJson(plain))
         let count = jpArrLen(parsed, "items")
@@ -163,7 +177,7 @@ func renderVaultWithFilter(plain, query) {
             i += 1
         }
     }
-    if get(appH(), "itemCount") == "0" {
+    if textState("itemCount") == "0" {
         doTextBox(vault, "No vault items in this local session.\n")
     }
     emit "1"
@@ -202,7 +216,7 @@ func onUnlock(self, cmd, sender) {
     if opened != "" {
         // Upgrade a legacy tab-delimited payload before it can be saved.
         let migrated = vmMigrate(opened)
-        doSet(appH(), "vaultPlain", migrated)
+        setTextState("vaultPlain", migrated)
         renderVaultPlain(migrated)
         if migrated != opened {
             setStatus("Unlocked vault (payload upgraded)")
@@ -210,8 +224,8 @@ func onUnlock(self, cmd, sender) {
             setStatus("Unlocked saved vault")
         }
     } else {
-        if get(appH(), "vaultPlain") == "" {
-            doSet(appH(), "vaultPlain", emptyVaultPlain())
+        if textState("vaultPlain") == "" {
+            setTextState("vaultPlain", emptyVaultPlain())
         }
         setStatus("Unlocked new vault")
     }
@@ -234,9 +248,9 @@ func onLock(self, cmd, sender) {
     doDisable(get(appH(), "deleteMatchButton"))
     doDisable(get(appH(), "findButton"))
     doDisable(get(appH(), "lockButton"))
-    doSet(appH(), "vaultPlain", "")
+    setTextState("vaultPlain", "")
     doTextBox(get(appH(), "vault"), "No vault items in this local session.\n")
-    doSet(appH(), "itemCount", "0")
+    setTextState("itemCount", "0")
     clearEntryFields()
     setStatus("Locked")
     emit "1"
@@ -249,7 +263,7 @@ func onAdd(self, cmd, sender) {
         alert("Krypton Vault", "Add a title for this item.")
         emit "1"
     }
-    let plain = get(appH(), "vaultPlain")
+    let plain = textState("vaultPlain")
     if plain == "" { plain = emptyVaultPlain() }
     if startsWith(plain, "KVPLAIN1\n") { plain = vmMigrate(plain) }
 
@@ -260,7 +274,7 @@ func onAdd(self, cmd, sender) {
             emit "1"
         }
         plain = vmAppend(plain, vmNoteItem(titleValue, notes))
-        doSet(appH(), "vaultPlain", plain)
+        setTextState("vaultPlain", plain)
         renderVaultPlain(plain)
         clearEntryFields()
         setStatus("Added note in memory")
@@ -275,7 +289,7 @@ func onAdd(self, cmd, sender) {
         emit "1"
     }
     plain = vmAppend(plain, vmLoginItem(titleValue, userValue, urlValue, passValue))
-    doSet(appH(), "vaultPlain", plain)
+    setTextState("vaultPlain", plain)
     renderVaultPlain(plain)
     clearEntryFields()
     setStatus("Added in memory")
@@ -295,7 +309,7 @@ func onCopyPassword(self, cmd, sender) {
 
 func onCopyMatch(self, cmd, sender) {
     let query = fieldText("search")
-    let passValue = vaultFindPassword(get(appH(), "vaultPlain"), query)
+    let passValue = vaultFindPassword(textState("vaultPlain"), query)
     if passValue == "" {
         alert("Krypton Vault", "No unlocked vault item matches that search.")
         setStatus("No match")
@@ -307,7 +321,7 @@ func onCopyMatch(self, cmd, sender) {
 }
 
 func onFind(self, cmd, sender) {
-    let plain = get(appH(), "vaultPlain")
+    let plain = textState("vaultPlain")
     if plain == "" {
         alert("Krypton Vault", "Unlock a vault before searching.")
         emit "1"
@@ -318,7 +332,7 @@ func onFind(self, cmd, sender) {
 }
 
 func onDeleteMatch(self, cmd, sender) {
-    let plain = get(appH(), "vaultPlain")
+    let plain = textState("vaultPlain")
     if plain == "" {
         alert("Krypton Vault", "Unlock a vault before deleting.")
         emit "1"
@@ -329,7 +343,7 @@ func onDeleteMatch(self, cmd, sender) {
         setStatus("No match")
         emit "1"
     }
-    doSet(appH(), "vaultPlain", nextPlain)
+    setTextState("vaultPlain", nextPlain)
     renderVaultWithFilter(nextPlain, "")
     setStatus("Deleted in memory")
     emit "1"
@@ -374,7 +388,7 @@ func onSync(self, cmd, sender) {
                     exec("chmod 600 " + shellQuote(restoreTmp))
                     exec("mv -f " + shellQuote(restoreTmp) + " " + shellQuote(sealedPath))
                     exec("chmod 600 " + shellQuote(sealedPath))
-                    doSet(appH(), "vaultPlain", opened)
+                    setTextState("vaultPlain", opened)
                     renderVaultPlain(opened)
                     setStatus("Encrypted vault restored")
                 } else {
@@ -418,7 +432,7 @@ func onPersist(self, cmd, sender) {
         setStatus("Save blocked")
         emit "1"
     }
-    let plain = get(appH(), "vaultPlain")
+    let plain = textState("vaultPlain")
     if plain == "" || vmHasItems(plain) != "1" {
         alert("Krypton Vault", "There are no vault items to save.")
         emit "1"
@@ -458,70 +472,78 @@ just run {
     let application = app("Krypton Vault")
     setupMenus(application)
 
-    let win = window("Krypton Vault", 920, 620)
-    minSize(win, 820, 560)
+    let win = window("Krypton Vault", 920, 760)
+    minSize(win, 820, 700)
     doWindowBackground(win, vaultBg())
     doTransparentTitlebar(win)
 
-    let headline = title(win, "Krypton Vault", area(24, 570, 260, 28))
+    let headline = title(win, "Krypton Vault", area(24, 710, 260, 28))
     tint(headline)
-    let status = label(win, "Locked", area(760, 570, 136, 22))
+    let status = label(win, "Locked", area(760, 710, 136, 22))
     tintMuted(status)
 
-    putLabel(win, "Master password", 24, 526, 140)
-    let master = password(win, area(166, 522, 384, 28))
+    putLabel(win, "Master password", 24, 666, 140)
+    let master = password(win, area(166, 662, 384, 28))
     tint(master)
     doPlaceholder(master, "Unlock local vault")
-    let unlockBtn = button(win, "Unlock", area(566, 522, 96, 30))
+    let unlockBtn = button(win, "Unlock", area(566, 662, 96, 30))
     tintButton(unlockBtn)
-    let lockBtn = button(win, "Lock", area(674, 522, 86, 30))
+    let lockBtn = button(win, "Lock", area(674, 662, 86, 30))
     tintButton(lockBtn)
-    let lockState = label(win, "Locked", area(774, 526, 122, 22))
+    let lockState = label(win, "Locked", area(774, 666, 122, 22))
     tintMuted(lockState)
 
-    putLabel(win, "Search", 24, 484, 90)
-    let search = field(win, area(166, 480, 298, 28))
+    putLabel(win, "Search", 24, 624, 90)
+    let search = field(win, area(166, 620, 298, 28))
     tint(search)
-    doPlaceholder(search, "Search title, user, or site")
-    let findBtn = button(win, "Find", area(478, 480, 72, 30))
+    doPlaceholder(search, "Search title, user, site, or note")
+    let findBtn = button(win, "Find", area(478, 620, 72, 30))
     tintButton(findBtn)
-    let syncBtn = button(win, "Sync", area(566, 480, 96, 30))
+    let syncBtn = button(win, "Sync", area(566, 620, 96, 30))
     tintButton(syncBtn)
-    let persistBtn = button(win, "Save", area(674, 480, 86, 30))
+    let persistBtn = button(win, "Save", area(674, 620, 86, 30))
     tintButton(persistBtn)
 
-    putLabel(win, "VPS URL", 24, 446, 90)
-    let syncUrl = field(win, area(166, 442, 300, 28))
+    putLabel(win, "VPS URL", 24, 586, 90)
+    let syncUrl = field(win, area(166, 582, 300, 28))
     tint(syncUrl)
     doPlaceholder(syncUrl, "https://kry.li")
 
-    putLabel(win, "Account", 488, 446, 90)
-    let syncUser = field(win, area(582, 442, 132, 28))
+    putLabel(win, "Account", 488, 586, 90)
+    let syncUser = field(win, area(582, 582, 132, 28))
     tint(syncUser)
     doPlaceholder(syncUser, "email")
-    let syncToken = password(win, area(724, 442, 172, 28))
+    let syncToken = password(win, area(724, 582, 172, 28))
     tint(syncToken)
     doPlaceholder(syncToken, "token")
 
-    putLabel(win, "Title", 24, 394, 90)
-    let itemTitle = field(win, area(166, 390, 300, 28))
+    putLabel(win, "Title", 24, 534, 90)
+    let itemTitle = field(win, area(166, 530, 300, 28))
     tint(itemTitle)
     doPlaceholder(itemTitle, "GitHub")
 
-    putLabel(win, "Username", 488, 394, 90)
-    let itemUser = field(win, area(582, 390, 314, 28))
+    putLabel(win, "Username", 488, 534, 90)
+    let itemUser = field(win, area(582, 530, 314, 28))
     tint(itemUser)
     doPlaceholder(itemUser, "name@example.com")
 
-    putLabel(win, "Website", 24, 354, 90)
-    let itemUrl = field(win, area(166, 350, 300, 28))
+    putLabel(win, "Website", 24, 494, 90)
+    let itemUrl = field(win, area(166, 490, 300, 28))
     tint(itemUrl)
     doPlaceholder(itemUrl, "https://example.com")
 
-    putLabel(win, "Password", 488, 354, 90)
-    let itemPassword = password(win, area(582, 350, 314, 28))
+    putLabel(win, "Password", 488, 494, 90)
+    let itemPassword = password(win, area(582, 490, 314, 28))
     tint(itemPassword)
     doPlaceholder(itemPassword, "Stored only in memory")
+
+    putLabel(win, "Type", 24, 448, 60)
+    let kindCombo = choices(win, area(86, 444, 130, 30))
+    doAddChoice(kindCombo, "Login")
+    doAddChoice(kindCombo, "Note")
+    doChoose(kindCombo, 0)
+    putLabel(win, "Notes", 250, 448, 60)
+    let itemNotes = textBox(win, area(24, 340, 872, 96))
 
     let addButton = button(win, "Add Item", area(166, 304, 108, 32))
     tintButton(addButton)
@@ -551,9 +573,11 @@ just run {
     doSet(application, "itemUser", itemUser)
     doSet(application, "itemUrl", itemUrl)
     doSet(application, "itemPassword", itemPassword)
+    doSet(application, "kind", kindCombo)
+    doSet(application, "itemNotes", itemNotes)
     doSet(application, "vault", vault)
-    doSet(application, "itemCount", "0")
-    doSet(application, "vaultPlain", "")
+    setTextState("itemCount", "0")
+    setTextState("vaultPlain", "")
     doSet(application, "findButton", findBtn)
     doSet(application, "addButton", addButton)
     doSet(application, "copyButton", copyButton)

@@ -8,6 +8,7 @@ locally; the VPS sync service stores only opaque encrypted blobs.
 ```text
 app/krypton_vault.ks                 macOS app
 stdlib/vault_format.k                Portable KV3 envelope
+stdlib/vault_model.k                 Portable typed payload model
 stdlib/vault_crypto_macos.k          Native macOS crypto backend
 tests/                               Vault and crypto smoke tests
 tools/                               Sync server, smoke test, verifier

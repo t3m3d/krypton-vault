@@ -43,6 +43,10 @@ env KRYPTON_ROOT="$OVERLAY" "$FE" "$ROOT/tests/vault_format_smoke.ks" > /tmp/kry
 "$HOST_BIN" --ir /tmp/krypton-vault-format-smoke.kir /tmp/krypton-vault-format-smoke
 chmod +x /tmp/krypton-vault-format-smoke
 /tmp/krypton-vault-format-smoke
+env KRYPTON_ROOT="$OVERLAY" "$FE" "$ROOT/tests/vault_model_smoke.ks" > /tmp/krypton-vault-model-smoke.kir
+"$HOST_BIN" --ir /tmp/krypton-vault-model-smoke.kir /tmp/krypton-vault-model-smoke
+chmod +x /tmp/krypton-vault-model-smoke
+/tmp/krypton-vault-model-smoke
 env KRYPTON_ROOT="$OVERLAY" "$FE" "$ROOT/tests/vault_crypto_smoke.ks" > /tmp/krypton-vault-crypto-smoke.kir
 "$HOST_BIN" --ir /tmp/krypton-vault-crypto-smoke.kir /tmp/krypton-vault-crypto-smoke
 chmod +x /tmp/krypton-vault-crypto-smoke

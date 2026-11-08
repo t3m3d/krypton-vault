@@ -50,7 +50,7 @@ func vmLoginItem(title, user, url, pass) {
 }
 
 func vmNoteItem(title, notes) {
-    emit jeObj("type", jeStr("note"),
+    emit jeObj3("type", jeStr("note"),
         "title", jeStr(title),
         "notes", jeStr(notes))
 }
