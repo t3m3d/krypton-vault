@@ -84,5 +84,5 @@ just run {
         printErr("delete item mismatch")
         exit(1)
     }
-    kp("vault format smoke ok")
+    print("vault format smoke ok")
 }

@@ -129,7 +129,7 @@ just run {
         printErr("failed to listen on " + port)
         exit(1)
     }
-    kp("krypton-vault-sync listening on :" + port)
+    print("krypton-vault-sync listening on :" + port)
     while 1 == 1 {
         let client = serverAccept(srv)
         if client >= 0 {

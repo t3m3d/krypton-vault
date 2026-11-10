@@ -83,5 +83,5 @@ just run {
     if startsWith(upgraded, "KV3\n") == 0 { fail("legacy vault did not upgrade to KV3") }
     if vaultOpen(master, upgraded) != legacyPlain { fail("upgraded vault does not open") }
 
-    kp("vault crypto smoke ok")
+    print("vault crypto smoke ok")
 }

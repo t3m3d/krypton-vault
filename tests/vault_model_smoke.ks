@@ -62,5 +62,5 @@ just run {
     if vmUserAt(migratedParsed, "items.1") != "acct-42" { fail("legacy username lost") }
     if vmPasswordAt(migratedParsed, "items.1") != "p@ss" { fail("legacy password lost") }
 
-    kp("vault model smoke ok")
+    print("vault model smoke ok")
 }
