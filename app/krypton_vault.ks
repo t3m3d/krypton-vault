@@ -239,6 +239,28 @@ func onUnlock(self, cmd, sender) {
     emit "1"
 }
 
+func onCreateVault(self, cmd, sender) {
+    let master = fieldText("setupMaster")
+    let confirm = fieldText("setupConfirm")
+    if len(master) < 12 {
+        alert("Krypton Vault", "Use at least 12 characters for your master password.")
+        emit "1"
+    }
+    if master != confirm {
+        alert("Krypton Vault", "The master passwords do not match.")
+        emit "1"
+    }
+    if sealLocalVault(master, emptyVaultPlain()) != "1" {
+        alert("Krypton Vault", "The encrypted vault could not be created.")
+        emit "1"
+    }
+    doText(get(appH(), "master"), master)
+    msg(get(appH(), "setupWin"), "close")
+    doShow(get(appH(), "mainWin"))
+    onUnlock(self, cmd, sender)
+    emit "1"
+}
+
 func onLock(self, cmd, sender) {
     doText(get(appH(), "master"), "")
     doText(get(appH(), "lockState"), "Locked")
@@ -459,6 +481,8 @@ func wire(btn, key, handler) {
 
 func setupMenus(application) {
     let bar = menuBar()
+    let appMenu = menu(bar, "Krypton Vault")
+    menuSelector(appMenu, "Quit Krypton Vault", "q", "terminate:")
     let edit = menu(bar, "Edit")
     menuSelector(edit, "Cut", "x", "cut:")
     menuSelector(edit, "Copy", "c", "copy:")
@@ -602,6 +626,50 @@ just run {
     wire(syncBtn, "vault.sync", funcptr(onSync))
     wire(persistBtn, "vault.persist", funcptr(onPersist))
 
-    doShow(win)
+    let setupWin = window("Set Up Krypton Vault", 620, 520)
+    minSize(setupWin, 560, 460)
+    doWindowBackground(setupWin, vaultBg())
+    doTransparentTitlebar(setupWin)
+
+    let setupTitle = title(setupWin, "Set up Krypton Vault", area(40, 430, 540, 34))
+    tint(setupTitle)
+    let setupIntro = label(setupWin,
+        "Create one master password to protect your encrypted vault.",
+        area(40, 390, 540, 24))
+    tintMuted(setupIntro)
+    let setupHint = label(setupWin,
+        "Krypton Vault cannot recover this password for you.",
+        area(40, 362, 540, 24))
+    tintMuted(setupHint)
+
+    let setupMasterLabel = label(setupWin, "Master password", area(40, 300, 160, 24))
+    tintMuted(setupMasterLabel)
+    let setupMaster = password(setupWin, area(40, 264, 540, 30))
+    tint(setupMaster)
+    doPlaceholder(setupMaster, "At least 12 characters")
+
+    let setupConfirmLabel = label(setupWin, "Confirm password", area(40, 210, 160, 24))
+    tintMuted(setupConfirmLabel)
+    let setupConfirm = password(setupWin, area(40, 174, 540, 30))
+    tint(setupConfirm)
+    doPlaceholder(setupConfirm, "Enter it again")
+
+    let setupCreate = button(setupWin, "Create Vault", area(40, 104, 160, 34))
+    tintButton(setupCreate)
+    let setupStatus = label(setupWin, "Your vault will be encrypted on this Mac.", area(40, 58, 540, 24))
+    tintMuted(setupStatus)
+
+    doSet(application, "mainWin", win)
+    doSet(application, "setupWin", setupWin)
+    doSet(application, "setupMaster", setupMaster)
+    doSet(application, "setupConfirm", setupConfirm)
+    doSet(application, "setupStatus", setupStatus)
+    wire(setupCreate, "vault.create", funcptr(onCreateVault))
+
+    if readFile(localVaultPath()) == "" {
+        doShow(setupWin)
+    } else {
+        doShow(win)
+    }
     doRun()
 }
