@@ -20,6 +20,13 @@ docs/krypton-vault.md                Product and deployment notes
 The Krypton compiler/runtime and reusable macOS native bindings remain in the
 sibling repository: `../krypton`. Set `KRYPTON_LANG_ROOT` if it is elsewhere.
 
+## Status: sync is disabled for now
+
+The macOS app currently ships with **no network calls and no sync UI** — only
+encrypted local storage. The VPS sync server and smoke tests remain in this
+repo for a later pass; when sync returns, restore the app-side UI code from
+git history.
+
 ## Build the macOS app
 
 ```bash

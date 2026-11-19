@@ -55,6 +55,28 @@ func vmNoteItem(title, notes) {
         "notes", jeStr(notes))
 }
 
+// NordPass-style card item: {"type":"card","title":..,"cardholder":..,
+// "cardNumber":..,"expiry":..,"cvv":..,"notes":..}
+func vmCardItem(title, cardholder, cardNumber, expiry, cvv, notes) {
+    emit "{\"type\":\"card\",\"title\":" + jeStr(title) +
+        ",\"cardholder\":" + jeStr(cardholder) +
+        ",\"cardNumber\":" + jeStr(cardNumber) +
+        ",\"expiry\":" + jeStr(expiry) +
+        ",\"cvv\":" + jeStr(cvv) +
+        ",\"notes\":" + jeStr(notes) + "}"
+}
+
+// NordPass-style identity item: {"type":"identity","title":..,"fullName":..,
+// "email":..,"phone":..,"address":..,"notes":..}
+func vmIdentityItem(title, fullName, email, phone, address, notes) {
+    emit "{\"type\":\"identity\",\"title\":" + jeStr(title) +
+        ",\"fullName\":" + jeStr(fullName) +
+        ",\"email\":" + jeStr(email) +
+        ",\"phone\":" + jeStr(phone) +
+        ",\"address\":" + jeStr(address) +
+        ",\"notes\":" + jeStr(notes) + "}"
+}
+
 // Missing type means a login, so pre-type items keep working.
 func vmTypeAt(parsed, base) {
     let t = jpGet(parsed, base + ".type")
@@ -67,6 +89,14 @@ func vmUserAt(parsed, base)     { emit jpGet(parsed, base + ".username") }
 func vmUrlAt(parsed, base)      { emit jpGet(parsed, base + ".url") }
 func vmPasswordAt(parsed, base) { emit jpGet(parsed, base + ".password") }
 func vmNotesAt(parsed, base)    { emit jpGet(parsed, base + ".notes") }
+func vmCardHolderAt(parsed, base)  { emit jpGet(parsed, base + ".cardholder") }
+func vmCardNumberAt(parsed, base)  { emit jpGet(parsed, base + ".cardNumber") }
+func vmCardExpiryAt(parsed, base)  { emit jpGet(parsed, base + ".expiry") }
+func vmCardCvvAt(parsed, base)     { emit jpGet(parsed, base + ".cvv") }
+func vmFullNameAt(parsed, base)    { emit jpGet(parsed, base + ".fullName") }
+func vmEmailAt(parsed, base)       { emit jpGet(parsed, base + ".email") }
+func vmPhoneAt(parsed, base)       { emit jpGet(parsed, base + ".phone") }
+func vmAddressAt(parsed, base)     { emit jpGet(parsed, base + ".address") }
 
 func vmCount(plain) {
     if vmIsJson(plain) != "1" { emit 0 }
@@ -78,16 +108,28 @@ func vmHasItems(plain) {
     emit "0"
 }
 
-// Text a list row is matched against. Passwords are deliberately excluded.
+// Text a list row is matched against. Passwords/CVVs are excluded.
 func vmSearchHayAt(parsed, base) {
     emit vmTitleAt(parsed, base) + " " + vmUserAt(parsed, base) + " " +
-        vmUrlAt(parsed, base) + " " + vmNotesAt(parsed, base)
+        vmUrlAt(parsed, base) + " " + vmNotesAt(parsed, base) + " " +
+        vmCardHolderAt(parsed, base) + " " + vmCardNumberAt(parsed, base) + " " +
+        vmCardExpiryAt(parsed, base) + " " +
+        vmFullNameAt(parsed, base) + " " + vmEmailAt(parsed, base) + " " +
+        vmPhoneAt(parsed, base) + " " + vmAddressAt(parsed, base)
 }
 
 // One-line display label for a vault row (no tabs, no password).
 func vmEntryLineAt(parsed, base) {
-    if vmTypeAt(parsed, base) == "note" {
-        emit "[note] " + vmTitleAt(parsed, base)
+    let t = vmTypeAt(parsed, base)
+    if t == "note" { emit "[note] " + vmTitleAt(parsed, base) }
+    if t == "card" {
+        let n = vmCardNumberAt(parsed, base)
+        let last4 = ""
+        if len(n) >= 4 { last4 = substring(n, len(n) - 4, len(n)) }
+        emit "[card] " + vmTitleAt(parsed, base) + "    **** " + last4
+    }
+    if t == "identity" {
+        emit "[id] " + vmTitleAt(parsed, base) + "    " + vmFullNameAt(parsed, base)
     }
     let line = vmTitleAt(parsed, base)
     let user = vmUserAt(parsed, base)
@@ -95,6 +137,27 @@ func vmEntryLineAt(parsed, base) {
     if user != "" { line = line + "    " + user }
     if url != "" { line = line + "    " + url }
     emit line
+}
+
+// Subtitle line shown under the title in list rows.
+func vmSubtitleAt(parsed, base) {
+    let t = vmTypeAt(parsed, base)
+    if t == "note" { emit "Secure note" }
+    if t == "card" {
+        let n = vmCardNumberAt(parsed, base)
+        let last4 = ""
+        if len(n) >= 4 { last4 = substring(n, len(n) - 4, len(n)) }
+        if len(last4) > 0 { emit "Card ending in " + last4 }
+        emit "Credit card"
+    }
+    if t == "identity" {
+        let email = vmEmailAt(parsed, base)
+        if email != "" { emit email }
+        emit vmFullNameAt(parsed, base)
+    }
+    if vmUserAt(parsed, base) != "" { emit vmUserAt(parsed, base) }
+    if vmUrlAt(parsed, base) != "" { emit vmUrlAt(parsed, base) }
+    emit "Login"
 }
 
 func vmAppend(plain, item) {
@@ -112,11 +175,55 @@ func vmAppend(plain, item) {
 }
 
 func vmEmitItem(parsed, base) {
-    if vmTypeAt(parsed, base) == "note" {
+    let t = vmTypeAt(parsed, base)
+    if t == "note" {
         emit vmNoteItem(vmTitleAt(parsed, base), vmNotesAt(parsed, base))
+    }
+    if t == "card" {
+        emit vmCardItem(vmTitleAt(parsed, base), vmCardHolderAt(parsed, base),
+            vmCardNumberAt(parsed, base), vmCardExpiryAt(parsed, base),
+            vmCardCvvAt(parsed, base), vmNotesAt(parsed, base))
+    }
+    if t == "identity" {
+        emit vmIdentityItem(vmTitleAt(parsed, base), vmFullNameAt(parsed, base),
+            vmEmailAt(parsed, base), vmPhoneAt(parsed, base),
+            vmAddressAt(parsed, base), vmNotesAt(parsed, base))
     }
     emit vmLoginItem(vmTitleAt(parsed, base), vmUserAt(parsed, base),
         vmUrlAt(parsed, base), vmPasswordAt(parsed, base))
+}
+
+// Replace the item at `index` (0-based) with `item`; keep everything else intact.
+func vmReplaceAt(plain, index, item) {
+    if vmIsJson(plain) != "1" { emit plain }
+    let parsed = jpParse(vmPlainJson(plain))
+    let count = jpArrLen(parsed, "items")
+    let items = ""
+    let j = 0
+    while j < count {
+        let entry = ""
+        if j == index { entry = item } else { entry = vmEmitItem(parsed, "items." + j) }
+        if items == "" { items = entry } else { items = items + "\t" + entry }
+        j += 1
+    }
+    emit "KVJSON1\n" + jeObj2("version", jeNum(1), "items", jeArrFrom(items))
+}
+
+// Remove the item at `index` (0-based); keep everything else intact.
+func vmRemoveAt(plain, index) {
+    if vmIsJson(plain) != "1" { emit plain }
+    let parsed = jpParse(vmPlainJson(plain))
+    let count = jpArrLen(parsed, "items")
+    let items = ""
+    let j = 0
+    while j < count {
+        if j != index {
+            let entry = vmEmitItem(parsed, "items." + j)
+            if items == "" { items = entry } else { items = items + "\t" + entry }
+        }
+        j += 1
+    }
+    emit "KVJSON1\n" + jeObj2("version", jeNum(1), "items", jeArrFrom(items))
 }
 
 func vmPasswordForQuery(plain, query) {

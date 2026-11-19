@@ -53,9 +53,14 @@ to:
 
 The UI can unlock, add logins or secure notes, delete the first search match,
 filter the visible vault list by title/user/site/note text, copy the first
-matching saved password, copy the edited password, save an encrypted local
-vault, upload the sealed vault blob to the VPS sync service, and restore a
-sealed vault from the VPS on a fresh client.
+matching saved password, copy the edited password, and save an encrypted local
+vault.
+
+VPS sync is **disabled for now**: the app contains no sync UI and no network
+calls (the `Sync` button, VPS URL/account/token fields, and the `curl`-based
+upload/restore path were removed on 2026-11-19). The sync service, smoke
+tests, and deploy files remain in the repo for a later pass; restore the UI
+code from git history when sync comes back.
 
 This is a real hardening step over the KV2 prototype, but it is not the final
 design. Before a public release, move the KDF to Argon2id (or scrypt) and the

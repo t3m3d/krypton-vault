@@ -2,7 +2,25 @@
 set -euo pipefail
 
 VAULT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LANG_ROOT="${KRYPTON_LANG_ROOT:-$(cd "$VAULT_ROOT/../krypton" && pwd)}"
+# Resolve the Krypton toolchain. The local repo checkout at ../krypton is a
+# development tree whose macOS backend is currently broken (crashes on
+# non-trivial apps), so prefer the released toolchain installed via
+# Homebrew; fall back to the local checkout only with a warning. Set
+# KRYPTON_LANG_ROOT to override.
+if [[ -z "${KRYPTON_LANG_ROOT:-}" ]]; then
+  if [[ -x /opt/homebrew/opt/krypton/libexec/compiler/macos_arm64/kcc-arm64 ]]; then
+    LANG_ROOT="/opt/homebrew/opt/krypton/libexec"
+  elif [[ -d "$VAULT_ROOT/../krypton" ]]; then
+    echo "WARNING: using ../krypton development-tree toolchain; it miscompiles apps and produces crashing binaries. Install krypton via Homebrew or set KRYPTON_LANG_ROOT to a known-good toolchain." >&2
+    LANG_ROOT="$(cd "$VAULT_ROOT/../krypton" && pwd)"
+  else
+    echo "Krypton macOS toolchain not found." >&2
+    echo "Install it with: brew install krypton   (or set KRYPTON_LANG_ROOT)" >&2
+    exit 1
+  fi
+else
+  LANG_ROOT="$KRYPTON_LANG_ROOT"
+fi
 FE="$LANG_ROOT/compiler/macos_arm64/kcc-arm64"
 HOST="$LANG_ROOT/compiler/macos_arm64/macho_host"
 APP_NAME="krypton-inspector"

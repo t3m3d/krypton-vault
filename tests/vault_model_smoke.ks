@@ -62,5 +62,35 @@ just run {
     if vmUserAt(migratedParsed, "items.1") != "acct-42" { fail("legacy username lost") }
     if vmPasswordAt(migratedParsed, "items.1") != "p@ss" { fail("legacy password lost") }
 
+    // Card and identity round-trip through append/parse/emit.
+    let cardItem = vmCardItem("Travel card", "Ada Lovelace", "4242424242424242", "12/29", "31337", "window seat lol")
+    let idItem = vmIdentityItem("Ada Identity", "Ada Lovelace", "ada@example.com", "+1 555 0100", "12 Babbage Way", "work badge")
+    let all = vmAppend(vmAppend(vmEmptyPlain(), cardItem), idItem)
+    let allParsed = jpParse(vmPlainJson(all))
+    if vmCount(all) != 2 { fail("card/identity append count wrong") }
+    if vmTypeAt(allParsed, "items.0") != "card" { fail("card type lost") }
+    if vmCardNumberAt(allParsed, "items.0") != "4242424242424242" { fail("card number lost") }
+    if vmCardCvvAt(allParsed, "items.0") != "31337" { fail("card cvv lost") }
+    if vmTypeAt(allParsed, "items.1") != "identity" { fail("identity type lost") }
+    if vmFullNameAt(allParsed, "items.1") != "Ada Lovelace" { fail("identity name lost") }
+    if vmEmailAt(allParsed, "items.1") != "ada@example.com" { fail("identity email lost") }
+    if vmAddressAt(allParsed, "items.1") != "12 Babbage Way" { fail("identity address lost") }
+    if !contains(vmSearchHayAt(allParsed, "items.1"), "ada@example.com") { fail("identity email not searchable") }
+    if contains(vmPasswordForQuery(all, "Travel"), "31337") { fail("card cvv leaked as password") }
+
+    // Replace at index: login -> card, order preserved.
+    let replaced = vmReplaceAt(all, 0, vmLoginItem("New Login", "n@example.com", "https://n.example", "pw123"))
+    let replacedParsed = jpParse(vmPlainJson(replaced))
+    if vmTypeAt(replacedParsed, "items.0") != "login" { fail("replace did not change type") }
+    if vmUserAt(replacedParsed, "items.0") != "n@example.com" { fail("replace did not write new item") }
+    if vmTypeAt(replacedParsed, "items.1") != "identity" { fail("replace reordered items") }
+    if vmCount(replaced) != 2 { fail("replace lost an item") }
+
+    // Remove at index: drop head, tail kept.
+    let removed = vmRemoveAt(all, 0)
+    let removedParsed = jpParse(vmPlainJson(removed))
+    if vmCount(removed) != 1 { fail("remove count wrong") }
+    if vmTypeAt(removedParsed, "items.0") != "identity" { fail("remove dropped wrong item") }
+
     print("vault model smoke ok")
 }
