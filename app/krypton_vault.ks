@@ -103,10 +103,15 @@ func passwordAt(win, x, y, w, h, placeholder) {
     emit fld
 }
 func trackField(win, key, x, y, w, h, placeholder, isPassword) {
-    let fld
-    if isPassword == 1 { fld = passwordAt(win, x, y, w, h, placeholder) } else { fld = fieldAt(win, x, y, w, h, placeholder) }
-    doSet(appH(), key, fld)
-    emit fld
+    if isPassword == 1 {
+        let pf = passwordAt(win, x, y, w, h, placeholder)
+        doSet(appH(), key, pf)
+        emit pf
+    } else {
+        let tf = fieldAt(win, x, y, w, h, placeholder)
+        doSet(appH(), key, tf)
+        emit tf
+    }
 }
 func trackLabel(win, key, text, x, y, w, color, size, bold) {
     let lbl = labelAt(win, text, x, y, w, color, size, bold)
@@ -160,7 +165,7 @@ func cat() { emit getInt("vault.cat") }
 
 // --------------------------------------------------------- table sources
 func tableRows(self, cmd, table) {
-    let mode = msg(get(table, "mode"), "UTF8String")
+    let mode = okText(get(table, "mode"))
     if mode == "cats" { emit 5 }
     let vis = get(table, "vis")
     if vis == 0 { emit 0 }
@@ -193,7 +198,7 @@ func itemLine(parsed, base) {
     emit title + "   •   " + itemSubtitle(parsed, base)
 }
 func tableCell(self, cmd, table, col, row) {
-    let mode = msg(get(table, "mode"), "UTF8String")
+    let mode = okText(get(table, "mode"))
     if mode == "cats" {
         let lines = get(table, "catlines")
         if lines == 0 { emit nsString("") }
@@ -231,7 +236,7 @@ func refreshAll() {
     let itemsTable = vw("itemsTable")
     let catsTable = vw("catsTable")
     if itemsTable == 0 || catsTable == 0 { emit "1" }
-    let q = trim(msg(vw("search"), "UTF8String"))
+    let q = trim(okText(vw("search")))
     let c = cat()
 
     let cLogin = 0
@@ -567,8 +572,8 @@ func refreshLockScreen() {
 }
 func enterVault() {
     let opened = openLocalVault(textState("vault.master"))
-    let migrated = ""
-    if opened != "" { migrated = vmMigrate(opened) } else { migrated = vmEmptyPlain() }
+    let migrated = vmEmptyPlain()
+    if opened != "" { migrated = vmMigrate(opened) }
     setTextState("vault.plain", migrated)
     let lockWin = vw("lockWin")
     let mainWin = vw("mainWin")
@@ -584,7 +589,7 @@ func onUnlock(self, cmd, sender) {
     let masterField = vw("unlockMaster")
     let mode = textState("vault.mode")
     if mode == "setup" { emit "1" }
-    let m = msg(masterField, "UTF8String")
+    let m = okText(masterField)
     if len(m) < 12 {
         alert("Krypton Vault", "Use a longer master password before opening the vault.")
         emit "1"
@@ -596,8 +601,8 @@ func onUnlock(self, cmd, sender) {
 func onCreate(self, cmd, sender) {
     let masterField = vw("unlockMaster")
     let confirmField = vw("setupConfirm")
-    let m = msg(masterField, "UTF8String")
-    let c = msg(confirmField, "UTF8String")
+    let m = okText(masterField)
+    let c = okText(confirmField)
     if len(m) < 12 {
         alert("Krypton Vault", "Use at least 12 characters for your master password.")
         emit "1"
@@ -606,7 +611,8 @@ func onCreate(self, cmd, sender) {
         alert("Krypton Vault", "The master passwords do not match.")
         emit "1"
     }
-    if sealLocalVault(m, vmEmptyPlain()) != "1" {
+    let sr = sealLocalVault(m, vmEmptyPlain())
+    if sr != "1" {
         alert("Krypton Vault", "The encrypted vault could not be created.")
         emit "1"
     }
@@ -615,14 +621,20 @@ func onCreate(self, cmd, sender) {
     doText(confirmField, "")
     emit enterVault()
 }
+func onQuit(self, cmd, sender) {
+    doQuit()
+    emit "1"
+}
 func onLock(self, cmd, sender) {
     let mainWin = vw("mainWin")
     setInt("vault.sel", 0 - 1)
     setTextState("vault.plain", "")
     setTextState("vault.master", "")
+    setTextState("vault.mode", "unlock")
     let lockWin = vw("lockWin")
     doShow(lockWin)
     msg(mainWin, "close")
+    refreshLockScreen()
     okMakeFirstResponder(lockWin, vw("unlockMaster"))
     emit "1"
 }
@@ -833,7 +845,7 @@ just run {
     // ---------- menus
     let bar = okMenuBar(application)
     let appMenu = okMenuAdd(bar, "Krypton Vault")
-    okMenuSelector(appMenu, "Quit Krypton Vault", "q", "terminate:")
+    okMenuAction(appMenu, "Quit Krypton Vault", "q", funcptr(onQuit))
     let file = okMenuAdd(bar, "File")
     okMenuAction(file, "New Item", "n", funcptr(onNewItem))
     okMenuAction(file, "Lock Vault", "l", funcptr(onLock))
